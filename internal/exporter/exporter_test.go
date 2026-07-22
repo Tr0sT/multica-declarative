@@ -100,6 +100,15 @@ func TestExportCreatesRoundTrippableSnapshot(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(out, "runtime-profiles")); !os.IsNotExist(err) {
 		t.Fatalf("removed runtime-profiles directory was created: %v", err)
 	}
+	manifestYAML, err := os.ReadFile(filepath.Join(out, "multica.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, removed := range []string{"kind:", "skills:", "agents:"} {
+		if strings.Contains(string(manifestYAML), removed) {
+			t.Fatalf("workspace manifest contains removed %s field:\n%s", removed, manifestYAML)
+		}
+	}
 	agentYAML, err := os.ReadFile(filepath.Join(out, "agents", "unity-developer", "agent.yaml"))
 	if err != nil {
 		t.Fatal(err)

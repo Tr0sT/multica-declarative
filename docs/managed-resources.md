@@ -8,13 +8,6 @@ direct database access or an undocumented HTTP endpoint.
 
 ```yaml
 apiVersion: multica-declarative/v1alpha1
-kind: Workspace
-
-skills:
-  - skills/unity-development
-
-agents:
-  - agents/builder/agent.yaml
 
 squads:
   - squads/unity-team/squad.yaml
@@ -24,6 +17,12 @@ runtimes:
     customName: Main PC
     provider: codex
 ```
+
+Agent and skill declarations are discovered recursively. Every directory below `agents/` that
+contains `agent.yaml` is an agent; every directory below `skills/` that contains `SKILL.md` is a
+skill. Directories without a marker are grouping directories, so layouts such as
+`agents/codex/builder/agent.yaml` and `skills/unity/testing/SKILL.md` require no manifest entries.
+Once a marker is found, discovery does not descend further into that resource directory.
 
 ## Agents
 

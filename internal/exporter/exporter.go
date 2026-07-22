@@ -58,9 +58,6 @@ type exportedSquad struct {
 }
 type workspaceDocument struct {
 	APIVersion string                     `yaml:"apiVersion"`
-	Kind       string                     `yaml:"kind"`
-	Skills     []string                   `yaml:"skills,omitempty"`
-	Agents     []string                   `yaml:"agents,omitempty"`
 	Squads     []string                   `yaml:"squads,omitempty"`
 	Runtimes   map[string]runtimeDocument `yaml:"runtimes,omitempty"`
 }
@@ -329,13 +326,7 @@ func (e Exporter) readSnapshot() (snapshot, error) {
 			squads = append(squads, sq)
 		}
 	}
-	manifest := workspaceDocument{APIVersion: apiVersion, Kind: "Workspace", Runtimes: runtimeDocs}
-	for _, v := range skills {
-		manifest.Skills = append(manifest.Skills, path.Join("skills", v.directory))
-	}
-	for _, v := range agents {
-		manifest.Agents = append(manifest.Agents, path.Join("agents", v.directory, "agent.yaml"))
-	}
+	manifest := workspaceDocument{APIVersion: apiVersion, Runtimes: runtimeDocs}
 	for _, v := range squads {
 		manifest.Squads = append(manifest.Squads, path.Join("squads", v.directory, "squad.yaml"))
 	}

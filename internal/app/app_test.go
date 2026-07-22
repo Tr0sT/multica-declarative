@@ -17,7 +17,7 @@ func TestVersion(t *testing.T) {
 }
 func TestValidateAllowsFlagsAfterCommand(t *testing.T) {
 	root := t.TempDir()
-	write(t, filepath.Join(root, "multica.yaml"), "apiVersion: multica-declarative/v1alpha1\nkind: Workspace\nskills: [skills/example]\n")
+	write(t, filepath.Join(root, "multica.yaml"), "apiVersion: multica-declarative/v1alpha1\n")
 	write(t, filepath.Join(root, "skills/example/SKILL.md"), "---\nname: example\ndescription: Example\n---\n")
 	var out, errout bytes.Buffer
 	code := Run([]string{"validate", "--config", filepath.Join(root, "multica.yaml")}, &out, &errout)

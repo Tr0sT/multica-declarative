@@ -11,17 +11,12 @@ func TestLoadProject(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "multica.yaml"), `apiVersion: multica-declarative/v1alpha1
-kind: Workspace
-skills:
-  - skills/unity
-agents:
-  - agents/unity.yaml
 runtimes:
   desktop:
     name: desktop
     provider: codex
 `)
-	writeFile(t, filepath.Join(root, "skills/unity/SKILL.md"), `---
+	writeFile(t, filepath.Join(root, "skills/game-engines/unity/SKILL.md"), `---
 name: unity-development
 description: Unity conventions
 metadata:
@@ -30,9 +25,9 @@ metadata:
 
 # Unity
 `)
-	writeFile(t, filepath.Join(root, "skills/unity/references/testing.md"), "# Tests\n")
-	writeFile(t, filepath.Join(root, "agents/instructions.md"), "Do the work.\n")
-	writeFile(t, filepath.Join(root, "agents/unity.yaml"), `name: Unity Developer
+	writeFile(t, filepath.Join(root, "skills/game-engines/unity/references/testing.md"), "# Tests\n")
+	writeFile(t, filepath.Join(root, "agents/codex/unity/instructions.md"), "Do the work.\n")
+	writeFile(t, filepath.Join(root, "agents/codex/unity/agent.yaml"), `name: Unity Developer
 instructionsFile: instructions.md
 skills: [unity-development]
 multica:
@@ -60,13 +55,11 @@ func TestRejectsUnknownAgentSkill(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "multica.yaml"), `apiVersion: multica-declarative/v1alpha1
-kind: Workspace
-agents: [agent.yaml]
 runtimes:
   desktop:
     name: desktop
 `)
-	writeFile(t, filepath.Join(root, "agent.yaml"), `name: Agent
+	writeFile(t, filepath.Join(root, "agents/codex/agent/agent.yaml"), `name: Agent
 skills: [missing]
 multica:
   runtime: desktop
@@ -82,9 +75,7 @@ func TestRejectsUnknownWorkspaceField(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "multica.yaml"), `apiVersion: multica-declarative/v1alpha1
-kind: Workspace
 unexpected: true
-skills: [skills/example]
 `)
 	writeFile(t, filepath.Join(root, "skills/example/SKILL.md"), `---
 name: example
@@ -102,9 +93,7 @@ func TestRejectsRemovedRuntimeProfilesField(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "multica.yaml"), `apiVersion: multica-declarative/v1alpha1
-kind: Workspace
 runtimeProfiles: []
-skills: [skills/example]
 `)
 	writeFile(t, filepath.Join(root, "skills/example/SKILL.md"), `---
 name: example
@@ -122,13 +111,11 @@ func TestRejectsAgentKindField(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "multica.yaml"), `apiVersion: multica-declarative/v1alpha1
-kind: Workspace
-agents: [agent.yaml]
 runtimes:
   desktop:
     name: desktop
 `)
-	writeFile(t, filepath.Join(root, "agent.yaml"), `kind: Prompt
+	writeFile(t, filepath.Join(root, "agents/codex/agent/agent.yaml"), `kind: Prompt
 name: Agent
 multica:
   runtime: desktop
@@ -137,6 +124,33 @@ multica:
 	_, err := Load(filepath.Join(root, "multica.yaml"))
 	if err == nil || !strings.Contains(err.Error(), "field kind not found") {
 		t.Fatalf("expected strict agent kind error, got %v", err)
+	}
+}
+
+func TestRejectsRemovedWorkspaceFields(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		field string
+		value string
+	}{
+		{name: "kind", field: "kind", value: "Workspace"},
+		{name: "skills", field: "skills", value: "[]"},
+		{name: "agents", field: "agents", value: "[]"},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			manifest := "apiVersion: multica-declarative/v1alpha1\n" + test.field + ": " + test.value + "\n"
+			writeFile(t, filepath.Join(root, "multica.yaml"), manifest)
+
+			_, err := Load(filepath.Join(root, "multica.yaml"))
+			if err == nil || !strings.Contains(err.Error(), "field "+test.field+" not found") {
+				t.Fatalf("expected removed %s field error, got %v", test.field, err)
+			}
+		})
 	}
 }
 

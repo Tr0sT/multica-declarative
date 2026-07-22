@@ -17,16 +17,12 @@ import (
 )
 
 const (
-	apiVersion    = "multica-declarative/v1alpha1"
-	workspaceKind = "Workspace"
-	squadKind     = "Squad"
+	apiVersion = "multica-declarative/v1alpha1"
+	squadKind  = "Squad"
 )
 
 type workspaceDocument struct {
 	APIVersion string                     `yaml:"apiVersion"`
-	Kind       string                     `yaml:"kind"`
-	Skills     []string                   `yaml:"skills"`
-	Agents     []string                   `yaml:"agents"`
 	Squads     []string                   `yaml:"squads"`
 	Runtimes   map[string]runtimeDocument `yaml:"runtimes"`
 }
@@ -165,9 +161,6 @@ func Load(workspacePath string) (model.Project, error) {
 	if doc.APIVersion != apiVersion {
 		return model.Project{}, fmt.Errorf("unsupported apiVersion %q; expected %q", doc.APIVersion, apiVersion)
 	}
-	if doc.Kind != workspaceKind {
-		return model.Project{}, fmt.Errorf("unsupported kind %q; expected %q", doc.Kind, workspaceKind)
-	}
 	base := filepath.Dir(absolute)
 	project := model.Project{WorkspacePath: absolute, RuntimeSelectors: map[string]model.RuntimeSelector{}}
 	for alias, raw := range doc.Runtimes {
@@ -181,23 +174,23 @@ func Load(workspacePath string) (model.Project, error) {
 		}
 		project.RuntimeSelectors[alias] = v
 	}
-	for _, item := range doc.Skills {
-		p, err := resolvePath(base, item)
-		if err != nil {
-			return project, err
-		}
-		v, err := loadSkill(p)
+	skillDirs, err := discoverResourceDirectories(base, "skills", "SKILL.md")
+	if err != nil {
+		return project, err
+	}
+	for _, directory := range skillDirs {
+		v, err := loadSkill(directory)
 		if err != nil {
 			return project, err
 		}
 		project.Skills = append(project.Skills, v)
 	}
-	for _, item := range doc.Agents {
-		p, err := resolvePath(base, item)
-		if err != nil {
-			return project, err
-		}
-		v, err := loadAgent(p)
+	agentDirs, err := discoverResourceDirectories(base, "agents", "agent.yaml")
+	if err != nil {
+		return project, err
+	}
+	for _, directory := range agentDirs {
+		v, err := loadAgent(filepath.Join(directory, "agent.yaml"))
 		if err != nil {
 			return project, err
 		}
@@ -218,6 +211,53 @@ func Load(workspacePath string) (model.Project, error) {
 		return model.Project{}, err
 	}
 	return project, nil
+}
+
+func discoverResourceDirectories(base, collection, marker string) ([]string, error) {
+	root := filepath.Join(base, collection)
+	info, err := os.Stat(root)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("stat %s: %w", root, err)
+	}
+	if !info.IsDir() {
+		return nil, fmt.Errorf("%s resource root must be a directory: %s", collection, root)
+	}
+
+	directories := []string{}
+	err = filepath.WalkDir(root, func(current string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if current == root {
+			return nil
+		}
+		if entry.Type()&os.ModeSymlink != 0 {
+			return fmt.Errorf("%s resource tree must not contain symlinks: %s", collection, current)
+		}
+		if !entry.IsDir() {
+			return nil
+		}
+		markerPath := filepath.Join(current, marker)
+		info, statErr := os.Stat(markerPath)
+		if statErr != nil {
+			if !os.IsNotExist(statErr) {
+				return fmt.Errorf("stat %s: %w", markerPath, statErr)
+			}
+			return nil
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("%s must be a regular file", markerPath)
+		}
+		directories = append(directories, current)
+		return filepath.SkipDir
+	})
+	if err != nil {
+		return nil, err
+	}
+	return directories, nil
 }
 
 func loadAgent(path string) (model.AgentSpec, error) {

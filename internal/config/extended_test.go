@@ -9,11 +9,6 @@ import (
 func TestLoadExtendedAgentAndSquad(t *testing.T) {
 	root := t.TempDir()
 	writeExtendedFile(t, filepath.Join(root, "multica.yaml"), `apiVersion: multica-declarative/v1alpha1
-kind: Workspace
-skills: [skills/unity]
-agents:
-  - agents/builder/agent.yaml
-  - agents/reviewer/agent.yaml
 squads: [squads/unity/squad.yaml]
 runtimes:
   desktop:
@@ -76,8 +71,8 @@ members:
 
 func TestRejectsTeamInvocationTargets(t *testing.T) {
 	root := t.TempDir()
-	writeExtendedFile(t, filepath.Join(root, "multica.yaml"), "apiVersion: multica-declarative/v1alpha1\nkind: Workspace\nagents: [agent.yaml]\nruntimes:\n  r:\n    id: runtime-1\n")
-	writeExtendedFile(t, filepath.Join(root, "agent.yaml"), "name: Agent\nmultica:\n  runtime: r\n  permission:\n    mode: public_to\n    teams: [team-1]\n")
+	writeExtendedFile(t, filepath.Join(root, "multica.yaml"), "apiVersion: multica-declarative/v1alpha1\nruntimes:\n  r:\n    id: runtime-1\n")
+	writeExtendedFile(t, filepath.Join(root, "agents/group/agent/agent.yaml"), "name: Agent\nmultica:\n  runtime: r\n  permission:\n    mode: public_to\n    teams: [team-1]\n")
 	if _, err := Load(filepath.Join(root, "multica.yaml")); err == nil {
 		t.Fatal("expected error")
 	}
@@ -85,8 +80,8 @@ func TestRejectsTeamInvocationTargets(t *testing.T) {
 
 func TestRejectsUnknownNestedAgentField(t *testing.T) {
 	root := t.TempDir()
-	writeExtendedFile(t, filepath.Join(root, "multica.yaml"), "apiVersion: multica-declarative/v1alpha1\nkind: Workspace\nagents: [agent.yaml]\nruntimes:\n  r:\n    id: runtime-1\n")
-	writeExtendedFile(t, filepath.Join(root, "agent.yaml"), "name: Agent\nmultica:\n  runtime: r\n  permission:\n    mode: private\n    surprise: true\n")
+	writeExtendedFile(t, filepath.Join(root, "multica.yaml"), "apiVersion: multica-declarative/v1alpha1\nruntimes:\n  r:\n    id: runtime-1\n")
+	writeExtendedFile(t, filepath.Join(root, "agents/group/agent/agent.yaml"), "name: Agent\nmultica:\n  runtime: r\n  permission:\n    mode: private\n    surprise: true\n")
 	if _, err := Load(filepath.Join(root, "multica.yaml")); err == nil {
 		t.Fatal("expected error")
 	}

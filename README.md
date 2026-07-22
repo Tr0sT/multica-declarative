@@ -33,6 +33,7 @@ Multica
 ## Current support
 
 - strict workspace and resource YAML validation;
+- recursive agent and skill discovery, allowing arbitrary grouping directories;
 - standard Agent Skills directories with `SKILL.md` and supporting text files;
 - agents with instructions, runtime and runtime config, model, reasoning level, concurrency,
   custom arguments, invocation permissions, skill assignments, custom env files, MCP config files,
@@ -129,14 +130,6 @@ files inside a declared skill and squad members are fully reconciled.
 
 ```yaml
 apiVersion: multica-declarative/v1alpha1
-kind: Workspace
-
-skills:
-  - skills/unity-development
-
-agents:
-  - agents/builder/agent.yaml
-  - agents/reviewer/agent.yaml
 
 squads:
   - squads/unity-team/squad.yaml
@@ -147,13 +140,19 @@ runtimes:
     provider: codex
 ```
 
+Skills and agents are discovered recursively under `skills/` and `agents/`; they are not listed in
+the manifest. A directory containing `SKILL.md` is a skill root, and one containing `agent.yaml` is
+an agent root. Parent directories may be used to group resources by runtime or any other convention.
+Discovery stops at a resource root, so its supporting subdirectories are not scanned as separate
+resources.
+
 A runtime selector may use `id`, `name`, `customName`, `provider`, or a combination. It must resolve
 to exactly one runtime.
 
 ## Skills
 
 ```text
-skills/unity-development/
+skills/game-engines/unity-development/
 ├── SKILL.md
 ├── references/
 └── scripts/
