@@ -1,6 +1,7 @@
 package exporter
 
 import (
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"os"
@@ -145,6 +146,16 @@ func writeSnapshot(root string, v snapshot) error {
 				return err
 			}
 		}
+		if a.customEnv != nil {
+			if err := writeJSON(filepath.Join(dir, customEnvFileName), a.customEnv); err != nil {
+				return err
+			}
+		}
+		if a.mcpConfig != nil {
+			if err := writeJSON(filepath.Join(dir, mcpConfigFileName), a.mcpConfig); err != nil {
+				return err
+			}
+		}
 		if err := writeYAML(filepath.Join(dir, "agent.yaml"), a.document); err != nil {
 			return err
 		}
@@ -162,6 +173,17 @@ func writeSnapshot(root string, v snapshot) error {
 		if err := writeYAML(filepath.Join(dir, "squad.yaml"), s.document); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+func writeJSON(target string, value any) error {
+	data, err := json.MarshalIndent(value, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode %s: %w", target, err)
+	}
+	data = append(data, '\n')
+	if err := os.WriteFile(target, data, 0600); err != nil {
+		return fmt.Errorf("write %s: %w", target, err)
 	}
 	return nil
 }

@@ -1,6 +1,7 @@
 package exporter
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,6 +17,7 @@ type fakeBackend struct {
 	agents       []model.Agent
 	runtimes     []model.Runtime
 	agentSkills  map[string][]model.SkillSummary
+	agentEnvs    map[string]map[string]string
 	squads       []model.Squad
 	squadMembers map[string][]model.SquadMember
 }
@@ -62,6 +64,17 @@ func (f *fakeBackend) ListAgentSkills(id string) ([]model.SkillSummary, error) {
 func (*fakeBackend) CreateAgent(model.AgentInput) (model.Agent, error)         { panic("mutation") }
 func (*fakeBackend) UpdateAgent(string, model.AgentInput) (model.Agent, error) { panic("mutation") }
 func (*fakeBackend) SetAgentSkills(string, []string) error                     { panic("mutation") }
+func (f *fakeBackend) GetAgentEnv(id string) (map[string]string, error) {
+	out := map[string]string{}
+	for key, value := range f.agentEnvs[id] {
+		out[key] = value
+	}
+	return out, nil
+}
+func (*fakeBackend) SetAgentEnv(string, string) error       { panic("mutation") }
+func (*fakeBackend) UploadAgentAvatar(string, string) error { panic("mutation") }
+func (*fakeBackend) ArchiveAgent(string) error              { panic("mutation") }
+func (*fakeBackend) RestoreAgent(string) error              { panic("mutation") }
 func (f *fakeBackend) ListRuntimes() ([]model.Runtime, error) {
 	return append([]model.Runtime(nil), f.runtimes...), nil
 }
@@ -115,6 +128,36 @@ func TestExportCreatesRoundTrippableSnapshot(t *testing.T) {
 	}
 	if strings.Contains(string(agentYAML), "kind:") {
 		t.Fatalf("agent declaration contains redundant kind field:\n%s", agentYAML)
+	}
+	for _, reference := range []string{"customEnvFile: custom-env.json", "mcpConfigFile: mcp.json"} {
+		if !strings.Contains(string(agentYAML), reference) {
+			t.Fatalf("agent declaration does not contain %q:\n%s", reference, agentYAML)
+		}
+	}
+	environmentData, err := os.ReadFile(filepath.Join(out, "agents", "unity-developer", customEnvFileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var environment map[string]string
+	if err := json.Unmarshal(environmentData, &environment); err != nil || environment["TOKEN"] != "env-secret" {
+		t.Fatalf("exported custom environment is invalid: %v", err)
+	}
+	mcpData, err := os.ReadFile(filepath.Join(out, "agents", "unity-developer", mcpConfigFileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mcp map[string]string
+	if err := json.Unmarshal(mcpData, &mcp); err != nil || mcp["token"] != "mcp-secret" {
+		t.Fatalf("exported MCP config is invalid: %v", err)
+	}
+	for _, secretFile := range []string{customEnvFileName, mcpConfigFileName} {
+		info, err := os.Stat(filepath.Join(out, "agents", "unity-developer", secretFile))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Mode().Perm() != 0600 {
+			t.Fatalf("%s permissions = %o", secretFile, info.Mode().Perm())
+		}
 	}
 	project, err := config.Load(filepath.Join(out, "multica.yaml"))
 	if err != nil {
@@ -201,7 +244,15 @@ func TestExportRejectsUnsafeSkillPath(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+func TestExportRejectsRedactedMCPConfig(t *testing.T) {
+	b := exampleBackend()
+	b.agents[0].MCPConfigRedacted = true
+	_, err := (Exporter{Backend: b}).Export(Options{OutputDir: filepath.Join(t.TempDir(), "export")})
+	if err == nil || !strings.Contains(err.Error(), "MCP config is redacted") {
+		t.Fatal(err)
+	}
+}
 func exampleBackend() *fakeBackend {
 	workspace := model.InvocationTarget{TargetType: "workspace"}
-	return &fakeBackend{skills: []model.Skill{{ID: "skill-1", Name: "unity-development", Description: "Unity conventions", Content: "---\nname: unity-development\ndescription: Unity conventions\n---\n", Files: []model.SkillFile{{ID: "f", Path: "references/test.md", Content: "test"}}}}, agents: []model.Agent{{ID: "agent-1", Name: "Unity Developer", Instructions: "work", RuntimeID: "runtime-1", PermissionMode: "public_to", InvocationTargets: []model.InvocationTarget{workspace}, MaxConcurrentTasks: 1}, {ID: "agent-2", Name: "Reviewer", RuntimeID: "runtime-1", PermissionMode: "private", MaxConcurrentTasks: 1}}, runtimes: []model.Runtime{{ID: "runtime-1", Name: "desktop", CustomName: "Main PC", Provider: "codex"}}, agentSkills: map[string][]model.SkillSummary{"agent-1": {{ID: "skill-1", Name: "unity-development"}}}, squads: []model.Squad{{ID: "sq", Name: "Team", LeaderID: "agent-1", Instructions: "coordinate"}}, squadMembers: map[string][]model.SquadMember{"sq": {{MemberID: "agent-1", MemberType: "agent", Role: "leader"}, {MemberID: "agent-2", MemberType: "agent", Role: "member"}}}}
+	return &fakeBackend{skills: []model.Skill{{ID: "skill-1", Name: "unity-development", Description: "Unity conventions", Content: "---\nname: unity-development\ndescription: Unity conventions\n---\n", Files: []model.SkillFile{{ID: "f", Path: "references/test.md", Content: "test"}}}}, agents: []model.Agent{{ID: "agent-1", Name: "Unity Developer", Instructions: "work", RuntimeID: "runtime-1", PermissionMode: "public_to", InvocationTargets: []model.InvocationTarget{workspace}, MaxConcurrentTasks: 1, MCPConfig: json.RawMessage(`{"token":"mcp-secret"}`), HasCustomEnv: true, CustomEnvKeyCount: 1}, {ID: "agent-2", Name: "Reviewer", RuntimeID: "runtime-1", PermissionMode: "private", MaxConcurrentTasks: 1}}, runtimes: []model.Runtime{{ID: "runtime-1", Name: "desktop", CustomName: "Main PC", Provider: "codex"}}, agentSkills: map[string][]model.SkillSummary{"agent-1": {{ID: "skill-1", Name: "unity-development"}}}, agentEnvs: map[string]map[string]string{"agent-1": {"TOKEN": "env-secret"}}, squads: []model.Squad{{ID: "sq", Name: "Team", LeaderID: "agent-1", Instructions: "coordinate"}}, squadMembers: map[string][]model.SquadMember{"sq": {{MemberID: "agent-1", MemberType: "agent", Role: "leader"}, {MemberID: "agent-2", MemberType: "agent", Role: "member"}}}}
 }

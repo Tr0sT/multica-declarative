@@ -1,6 +1,8 @@
 package exporter
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -16,8 +18,10 @@ import (
 )
 
 const (
-	defaultOutputDir = "multica-export"
-	apiVersion       = "multica-declarative/v1alpha1"
+	defaultOutputDir  = "multica-export"
+	apiVersion        = "multica-declarative/v1alpha1"
+	customEnvFileName = "custom-env.json"
+	mcpConfigFileName = "mcp.json"
 )
 
 var generatedPaths = []string{"multica.yaml", "agents", "skills", "squads"}
@@ -51,6 +55,8 @@ type exportedAgent struct {
 	document                agentDocument
 	avatarName              string
 	avatar                  []byte
+	customEnv               map[string]string
+	mcpConfig               json.RawMessage
 }
 type exportedSquad struct {
 	directory, instructions string
@@ -94,6 +100,8 @@ type multicaDocument struct {
 	MaxConcurrentTasks       int                          `yaml:"maxConcurrentTasks"`
 	Permission               any                          `yaml:"permission"`
 	CustomArgs               []string                     `yaml:"customArgs,omitempty"`
+	CustomEnvFile            string                       `yaml:"customEnvFile,omitempty"`
+	MCPConfigFile            string                       `yaml:"mcpConfigFile,omitempty"`
 	AvatarFile               string                       `yaml:"avatarFile,omitempty"`
 	Archived                 bool                         `yaml:"archived,omitempty"`
 	DisabledRuntimeSkills    []model.DisabledRuntimeSkill `yaml:"disabledRuntimeSkills,omitempty"`
@@ -113,6 +121,10 @@ type squadMemberDocument struct {
 	Agent string `yaml:"agent,omitempty"`
 	ID    string `yaml:"id,omitempty"`
 	Role  string `yaml:"role"`
+}
+
+type agentEnvironmentReader interface {
+	GetAgentEnv(agentID string) (map[string]string, error)
 }
 
 func (e Exporter) Export(options Options) (Result, error) {
@@ -206,6 +218,7 @@ func (e Exporter) readSnapshot() (snapshot, error) {
 	}
 	detailed := []model.Agent{}
 	agentSkills := map[string][]model.SkillSummary{}
+	agentEnvironments := map[string]map[string]string{}
 	for _, s := range agentSummaries {
 		a, err := e.Backend.GetAgent(s.ID)
 		if err != nil {
@@ -226,10 +239,27 @@ func (e Exporter) readSnapshot() (snapshot, error) {
 		detailed = append(detailed, a)
 		agentSkills[a.ID] = assigned
 		if a.HasCustomEnv || a.CustomEnvKeyCount > 0 {
-			warnings = append(warnings, fmt.Sprintf("agent %q custom environment is intentionally not exported; add customEnvFile manually", a.Name))
+			reader, ok := e.Backend.(agentEnvironmentReader)
+			if !ok {
+				return snapshot{}, fmt.Errorf("backend cannot export custom environment for agent %q", a.Name)
+			}
+			environment, err := reader.GetAgentEnv(a.ID)
+			if err != nil {
+				return snapshot{}, fmt.Errorf("export custom environment for agent %q: %w", a.Name, err)
+			}
+			if environment == nil {
+				environment = map[string]string{}
+			}
+			if a.CustomEnvKeyCount > 0 && len(environment) != a.CustomEnvKeyCount {
+				return snapshot{}, fmt.Errorf("agent %q reports %d custom environment key(s), but the CLI returned %d", a.Name, a.CustomEnvKeyCount, len(environment))
+			}
+			agentEnvironments[a.ID] = environment
 		}
-		if len(a.MCPConfig) > 0 && string(a.MCPConfig) != "null" {
-			warnings = append(warnings, fmt.Sprintf("agent %q MCP config is intentionally not exported; add mcpConfigFile manually", a.Name))
+		if a.MCPConfigRedacted {
+			return snapshot{}, fmt.Errorf("agent %q MCP config is redacted and cannot be exported faithfully", a.Name)
+		}
+		if hasJSONValue(a.MCPConfig) && !json.Valid(a.MCPConfig) {
+			return snapshot{}, fmt.Errorf("agent %q MCP config is not valid JSON", a.Name)
 		}
 	}
 	aliases, runtimeDocs, err := makeRuntimeDocuments(runtimes, detailed)
@@ -265,6 +295,14 @@ func (e Exporter) readSnapshot() (snapshot, error) {
 		}
 		dir := uniqueSlug(a.Name, a.ID, usedAgents)
 		ea := exportedAgent{directory: dir, instructions: a.Instructions, document: agentDocument{Name: a.Name, Description: a.Description, InstructionsFile: "AGENT.md", Model: md, Skills: assignments, Multica: multicaDocument{Runtime: aliases[a.RuntimeID], RuntimeConfig: a.RuntimeConfig, ThinkingLevel: a.ThinkingLevel, MaxConcurrentTasks: normalizedConcurrency(a.MaxConcurrentTasks), Permission: permission, CustomArgs: append([]string(nil), a.CustomArgs...), Archived: a.Archived(), DisabledRuntimeSkills: append([]model.DisabledRuntimeSkill(nil), a.DisabledRuntimeSkills...), ComposioToolkitAllowlist: append([]string(nil), a.ComposioToolkitAllowlist...)}}}
+		if environment, ok := agentEnvironments[a.ID]; ok {
+			ea.customEnv = environment
+			ea.document.Multica.CustomEnvFile = customEnvFileName
+		}
+		if hasJSONValue(a.MCPConfig) {
+			ea.mcpConfig = append(json.RawMessage(nil), a.MCPConfig...)
+			ea.document.Multica.MCPConfigFile = mcpConfigFileName
+		}
 		if a.AvatarURL != nil && *a.AvatarURL != "" {
 			data, name, downloadErr := e.downloadAvatar(*a.AvatarURL)
 			if downloadErr != nil {
@@ -334,6 +372,11 @@ func (e Exporter) readSnapshot() (snapshot, error) {
 		manifest.Squads = append(manifest.Squads, path.Join("squads", v.directory, "squad.yaml"))
 	}
 	return snapshot{manifest: manifest, skills: skills, agents: agents, squads: squads, warnings: warnings}, nil
+}
+
+func hasJSONValue(value json.RawMessage) bool {
+	trimmed := bytes.TrimSpace(value)
+	return len(trimmed) > 0 && !bytes.Equal(trimmed, []byte("null"))
 }
 
 func (e Exporter) downloadAvatar(url string) ([]byte, string, error) {

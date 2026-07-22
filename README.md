@@ -83,9 +83,11 @@ multica-declarative validate
 multica-declarative plan
 ```
 
-The exporter is read-only with respect to Multica. It writes agents, skills, squads, and runtime
-selectors. Secret values from custom environment variables and MCP config are
-intentionally not exported; add local `customEnvFile` and `mcpConfigFile` references manually.
+The exporter is read-only with respect to Multica. It writes agents, skills, squads, runtime
+selectors, and agent secrets. Custom environment values are stored as `custom-env.json`; MCP
+configuration is stored as `mcp.json`. Both files live beside `agent.yaml`, are referenced from it,
+and are intended to be version-controlled with the rest of the declaration. Export fails rather
+than writing an MCP configuration that Multica returned in redacted form.
 
 Refreshing is explicit:
 
@@ -195,7 +197,7 @@ Important compatibility boundary:
 - non-empty export targets require `--force`;
 - undeclared agents, skills, and squads are untouched;
 - top-level pruning is not implemented;
-- secret values are never emitted by export or printed in plans;
+- secret values are exported to agent JSON files with local mode `0600` and are never printed in plans;
 - custom env and MCP values are passed to Multica by file, not embedded in process arguments;
 - unsupported or lossy operations fail explicitly.
 
@@ -224,9 +226,8 @@ separate tests verify generated Multica CLI arguments and round-trip YAML behavi
 2. incremental/selective export;
 3. machine-readable plans and drift/conflict detection;
 4. JSON Schema and editor completion;
-5. secret-provider integrations such as SOPS/age;
-6. ownership-aware `--prune`;
-7. release binaries, Nix packaging, and CI apply workflows.
+5. ownership-aware `--prune`;
+6. release binaries, Nix packaging, and CI apply workflows.
 
 ## Principles
 
@@ -235,4 +236,5 @@ separate tests verify generated Multica CLI arguments and round-trip YAML behavi
 - The official CLI is the compatibility boundary.
 - Apply must converge.
 - Destructive and lossy behavior must be explicit.
-- Secret material must not appear in Git diffs, plans, logs, shell history, or command arguments.
+- Secret material is declarative state stored in Git beside its agent; plans, logs, shell history,
+  and command arguments must not print its values.
