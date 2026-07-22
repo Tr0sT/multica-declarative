@@ -142,6 +142,23 @@ func TestFullAgentNoop(t *testing.T) {
 		t.Fatalf("%#v", changes[1])
 	}
 }
+
+func TestWorkspacePermissionIgnoresServerWorkspaceID(t *testing.T) {
+	workspaceID := "workspace-1"
+	desired := model.AgentSpec{
+		PermissionMode:    "public_to",
+		InvocationTargets: []model.InvocationTarget{{TargetType: "workspace"}},
+	}
+	actual := model.Agent{
+		PermissionMode:    "public_to",
+		InvocationTargets: []model.InvocationTarget{{TargetType: "workspace", TargetID: &workspaceID}},
+	}
+
+	if !permissionMatches(desired, actual) {
+		t.Fatal("workspace target IDs returned by the server must not cause drift")
+	}
+}
+
 func TestObservedOnlyAgentFieldRejectsApply(t *testing.T) {
 	b := existingBackend()
 	p := exampleProject(t)

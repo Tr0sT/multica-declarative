@@ -772,7 +772,11 @@ func targetKeys(items []model.InvocationTarget) []string {
 	out := []string{}
 	for _, t := range items {
 		id := ""
-		if t.TargetID != nil {
+		// Multica returns the current workspace ID for workspace targets, while
+		// declarations intentionally represent that target as workspace: true.
+		// The ID is therefore transport metadata rather than part of the desired
+		// identity. Member (and any future scoped) targets still compare by ID.
+		if t.TargetType != "workspace" && t.TargetID != nil {
 			id = *t.TargetID
 		}
 		out = append(out, t.TargetType+":"+id)
