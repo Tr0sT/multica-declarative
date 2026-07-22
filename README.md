@@ -17,7 +17,7 @@ Git repository
   └── skills/*/SKILL.md
           │
           ▼
-multica-declarative validate / plan / apply
+multica-declarative export / validate / plan / apply
           │
           ▼
 official multica CLI --output json
@@ -50,11 +50,12 @@ The YAML parser is the only external Go dependency.
 
 ## Intended workflow
 
-1. Edit an agent instruction, model, runtime binding, or skill in Git.
-2. Review the normal Git diff.
-3. Run `multica-declarative plan` to compare desired and actual state.
-4. Run `multica-declarative apply` to reconcile the workspace.
-5. Roll back by reverting a Git commit and applying again.
+1. Bootstrap an existing workspace once with `multica-declarative export`, or start from the example.
+2. Edit an agent instruction, model, runtime binding, or skill in Git.
+3. Review the normal Git diff.
+4. Run `multica-declarative plan` to compare desired and actual state.
+5. Run `multica-declarative apply` to reconcile the workspace.
+6. Roll back by reverting a Git commit and applying again.
 
 This gives us history, code review, reproducibility, drift visibility, and a path toward CI-driven deployment without moving configuration ownership into Multica's database.
 
@@ -68,6 +69,7 @@ The current version supports:
 - declarative prompt agents;
 - runtime selection by ID, runtime name, custom name, and provider;
 - agent model, instructions, thinking level, concurrency, custom arguments, permissions, and skill assignments;
+- read-only `export` of current active agents, all workspace skills, and referenced runtimes;
 - `plan` with create/update/no-change output;
 - idempotent `apply` through the official Multica CLI;
 - full synchronization of files inside managed skills.
@@ -114,6 +116,27 @@ go install github.com/Tr0sT/multica-declarative/cmd/multica-declarative@latest
 Prebuilt release artifacts and Nix packaging are planned.
 
 ## Quick start
+
+### Bootstrap an existing Multica workspace
+
+Export the current workspace into a new directory:
+
+```bash
+multica-declarative export --output-dir ./my-workspace
+cd my-workspace
+multica-declarative validate
+multica-declarative plan
+```
+
+`export` reads Multica through the official CLI and does not mutate the workspace. By default it refuses to write into a non-empty directory. To refresh an existing export while preserving unrelated files in that directory:
+
+```bash
+multica-declarative export --output-dir ./my-workspace --force
+```
+
+With `--force`, only the generated `multica.yaml`, `agents/`, and `skills/` paths are replaced. Other files such as `README.md` or `.git/` are preserved.
+
+### Start from the example
 
 Copy the example:
 
@@ -268,6 +291,33 @@ Supported permissions:
 
 ## Commands
 
+### `export`
+
+Reads the current Multica workspace and writes a declarative snapshot. It exports all workspace skills, all active non-archived agents, and only the runtimes referenced by those agents.
+
+```bash
+multica-declarative export --output-dir ./multica-export
+```
+
+Generated layout:
+
+```text
+multica-export/
+├── multica.yaml
+├── agents/
+│   └── <agent>/
+│       ├── agent.yaml
+│       └── AGENT.md
+└── skills/
+    └── <skill>/
+        ├── SKILL.md
+        └── ... additional skill files
+```
+
+Runtime selectors prefer a unique `customName` and provider, then a unique runtime name and provider, and fall back to the runtime ID when necessary. Directory names are deterministic slugs; declarations retain the exact Multica resource names.
+
+The exporter refuses lossy conversion. For example, member-only or team-only `public_to` invocation permissions are not representable by the current `private|workspace` schema, so export fails before writing files instead of silently changing access. If a legacy skill does not contain compatible Agent Skills frontmatter, valid frontmatter is generated and a warning is printed; the first `plan` may then show a content or description update.
+
 ### `validate`
 
 Loads all declarations and checks local consistency without contacting Multica.
@@ -308,6 +358,8 @@ multica-declarative apply
 
 The MVP follows conservative rules:
 
+- `export` is read-only with respect to Multica and validates the complete snapshot before writing;
+- export output directories must be empty unless `--force` is explicit;
 - only resources explicitly declared in the manifest are managed;
 - undeclared Multica skills and agents are untouched;
 - no pruning or destructive deletion of top-level resources exists yet;
@@ -351,7 +403,7 @@ The backend is represented by a Go interface, so reconciliation is tested withou
 Likely next steps:
 
 1. stable local resource keys and a Terraform-like state file so objects can be renamed safely;
-2. `export` to bootstrap declarations from an existing Multica workspace;
+2. incremental export/update modes and selective resource filters;
 3. explicit drift reporting and machine-readable plans;
 4. JSON Schema files and editor completion;
 5. secret references for `custom_env` and MCP configuration without storing values in Git;
