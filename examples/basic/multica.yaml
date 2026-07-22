@@ -1,0 +1,13 @@
+apiVersion: multica-declarative/v1alpha1
+kind: Workspace
+
+skills:
+  - skills/unity-development
+
+agents:
+  - agents/unity-developer/agent.yaml
+
+runtimes:
+  main-desktop:
+    customName: Main PC
+    provider: codex
