@@ -134,8 +134,15 @@ func TestExportRepresentsMemberScopedPermission(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if project.Agents[0].PermissionMode != "public_to" || len(project.Agents[0].InvocationTargets) != 1 {
-		t.Fatalf("%#v", project.Agents[0])
+	var exported *model.AgentSpec
+	for index := range project.Agents {
+		if project.Agents[index].Name == "Unity Developer" {
+			exported = &project.Agents[index]
+			break
+		}
+	}
+	if exported == nil || exported.PermissionMode != "public_to" || len(exported.InvocationTargets) != 1 {
+		t.Fatalf("agents = %#v", project.Agents)
 	}
 }
 func TestExportForcePreservesUnrelated(t *testing.T) {
