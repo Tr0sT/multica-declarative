@@ -13,13 +13,15 @@ This repository builds a small, predictable declarative reconciler for Multica.
 - `apply` must be idempotent.
 - Do not delete undeclared remote resources unless an explicit pruning feature is designed and enabled.
 - Never print secret values or pass new secret material through command-line arguments.
+- Keep the core backend behind a Go interface so reconciliation remains unit-testable.
 
 ## Development
 
 Run before submitting changes:
 
 ```bash
-python -m pip install -e ".[dev]"
-ruff check .
-pytest
+gofmt -w .
+go vet ./...
+go test ./...
+go build ./cmd/multica-declarative
 ```
