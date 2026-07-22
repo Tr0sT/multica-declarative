@@ -13,7 +13,7 @@ func TestVersion(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	code := Run([]string{"--version"}, &stdout, &stderr)
-	if code != 0 || !strings.Contains(stdout.String(), "0.2.0") {
+	if code != 0 || !strings.Contains(stdout.String(), "0.3.0") {
 		t.Fatalf("code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
 	}
 }
@@ -36,6 +36,21 @@ description: Example
 	code := Run([]string{"validate", "--config", filepath.Join(root, "multica.yaml")}, &stdout, &stderr)
 	if code != 0 || !strings.Contains(stdout.String(), "Configuration is valid") {
 		t.Fatalf("code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+}
+
+func TestSplitCommandRecognizesExportAndOutputDir(t *testing.T) {
+	t.Parallel()
+	command, args, err := splitCommand([]string{"export", "--output-dir", "snapshot", "--force"})
+	if err != nil {
+		t.Fatalf("splitCommand returned error: %v", err)
+	}
+	if command != "export" {
+		t.Fatalf("command = %q", command)
+	}
+	want := []string{"--output-dir", "snapshot", "--force"}
+	if strings.Join(args, "|") != strings.Join(want, "|") {
+		t.Fatalf("args = %v", args)
 	}
 }
 

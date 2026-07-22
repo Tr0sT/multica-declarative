@@ -9,11 +9,12 @@ import (
 
 	"github.com/Tr0sT/multica-declarative/internal/backend"
 	"github.com/Tr0sT/multica-declarative/internal/config"
+	"github.com/Tr0sT/multica-declarative/internal/exporter"
 	"github.com/Tr0sT/multica-declarative/internal/model"
 	"github.com/Tr0sT/multica-declarative/internal/reconcile"
 )
 
-var Version = "0.2.0-dev"
+var Version = "0.3.0-dev"
 
 func Run(args []string, stdout, stderr io.Writer) int {
 	command, flagArgs, err := splitCommand(args)
@@ -26,9 +27,11 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	flags.SetOutput(stderr)
 	configPath := flags.String("config", "multica.yaml", "path to the workspace manifest")
 	multicaBinary := flags.String("multica-bin", "multica", "path or name of the Multica CLI binary")
+	outputDir := flags.String("output-dir", "multica-export", "directory written by export")
+	force := flags.Bool("force", false, "replace generated export paths in a non-empty output directory")
 	showVersion := flags.Bool("version", false, "print the version")
 	flags.Usage = func() {
-		fmt.Fprintln(stderr, "Usage: multica-declarative [flags] <validate|plan|apply>")
+		fmt.Fprintln(stderr, "Usage: multica-declarative [flags] <export|validate|plan|apply>")
 		flags.PrintDefaults()
 	}
 	if err := flags.Parse(flagArgs); err != nil {
@@ -50,6 +53,30 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
+	cliBackend := backend.NewCLI(*multicaBinary)
+	if command == "export" {
+		result, err := (exporter.Exporter{Backend: cliBackend}).Export(exporter.Options{
+			OutputDir: *outputDir,
+			Force:     *force,
+		})
+		if err != nil {
+			fmt.Fprintf(stderr, "export failed: %v\n", err)
+			return 1
+		}
+		for _, warning := range result.Warnings {
+			fmt.Fprintf(stderr, "warning: %s\n", warning)
+		}
+		fmt.Fprintf(
+			stdout,
+			"Exported %d skill(s), %d agent(s), and %d runtime selector(s) to %s.\n",
+			result.Skills,
+			result.Agents,
+			result.Runtimes,
+			result.OutputDir,
+		)
+		return 0
+	}
+
 	project, err := config.Load(*configPath)
 	if err != nil {
 		fmt.Fprintf(stderr, "%s failed: %v\n", command, err)
@@ -66,7 +93,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 
-	controller := reconcile.Reconciler{Backend: backend.NewCLI(*multicaBinary)}
+	controller := reconcile.Reconciler{Backend: cliBackend}
 	switch command {
 	case "plan":
 		changes, err := controller.Plan(project)
@@ -117,12 +144,12 @@ func splitCommand(args []string) (string, []string, error) {
 			expectsValue = false
 			continue
 		}
-		if argument == "--config" || argument == "--multica-bin" {
+		if argument == "--config" || argument == "--multica-bin" || argument == "--output-dir" {
 			remaining = append(remaining, argument)
 			expectsValue = true
 			continue
 		}
-		if argument == "validate" || argument == "plan" || argument == "apply" {
+		if argument == "export" || argument == "validate" || argument == "plan" || argument == "apply" {
 			if command != "" {
 				return "", nil, fmt.Errorf("multiple commands: %q and %q", command, argument)
 			}
