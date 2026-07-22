@@ -1,0 +1,27 @@
+name: Apply generated update
+
+on:
+  push:
+    branches: [feat/agents-squads-runtime-profiles]
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/agents-squads-runtime-profiles
+      - name: Apply prepared source update
+        run: |
+          cat .github/generated-update/part* | base64 -d > /tmp/generated-update.tar.gz
+          tar -xzf /tmp/generated-update.tar.gz
+          rm -rf .github/generated-update .github/workflows/apply-generated-update.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          git commit -m "feat: manage agents squads and runtime profiles"
+          git push origin HEAD:feat/agents-squads-runtime-profiles
