@@ -19,3 +19,28 @@ type Backend interface {
 
 	ListRuntimes() ([]model.Runtime, error)
 }
+
+type AgentOperations interface {
+	GetAgentEnv(agentID string) (map[string]string, error)
+	SetAgentEnv(agentID, file string) error
+	UploadAgentAvatar(agentID, file string) error
+	ArchiveAgent(agentID string) error
+	RestoreAgent(agentID string) error
+}
+
+type SquadOperations interface {
+	ListSquads() ([]model.Squad, error)
+	GetSquad(squadID string) (model.Squad, error)
+	CreateSquad(input model.SquadInput) (model.Squad, error)
+	UpdateSquad(squadID string, input model.SquadInput, fields []string) (model.Squad, error)
+	ListSquadMembers(squadID string) ([]model.SquadMember, error)
+	AddSquadMember(squadID string, member model.SquadMember) error
+	SetSquadMemberRole(squadID string, member model.SquadMember) error
+	RemoveSquadMember(squadID string, member model.SquadMember) error
+}
+
+type RuntimeProfileOperations interface {
+	ListRuntimeProfiles() ([]model.RuntimeProfile, error)
+	CreateRuntimeProfile(input model.RuntimeProfileInput) (model.RuntimeProfile, error)
+	UpdateRuntimeProfile(profileID string, input model.RuntimeProfileInput, fields []string) (model.RuntimeProfile, error)
+}

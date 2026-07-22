@@ -14,68 +14,87 @@ type runnerCall struct {
 	name string
 	args []string
 }
-
 type fakeRunner struct {
-	stdout []byte
-	stderr []byte
-	err    error
-	calls  []runnerCall
+	stdout, stderr []byte
+	err            error
+	calls          []runnerCall
 }
 
 func (r *fakeRunner) Run(_ context.Context, name string, args ...string) ([]byte, []byte, error) {
 	r.calls = append(r.calls, runnerCall{name: name, args: append([]string(nil), args...)})
 	return r.stdout, r.stderr, r.err
 }
-
 func TestUpdateAgentPassesClearableFields(t *testing.T) {
-	t.Parallel()
 	runner := &fakeRunner{stdout: []byte(`{"id":"agent-1","name":"Agent"}`)}
-	client := &CLI{Binary: "multica-test", Runner: runner}
-
-	_, err := client.UpdateAgent("agent-1", model.AgentInput{
-		Name:               "Agent",
-		RuntimeID:          "runtime-1",
-		Permission:         "private",
-		MaxConcurrentTasks: 1,
-	})
+	c := &CLI{Binary: "multica-test", Runner: runner}
+	_, err := c.UpdateAgent("agent-1", model.AgentInput{Name: "Agent", RuntimeID: "runtime-1", ManageRuntimeConfig: true, Permission: "private", MaxConcurrentTasks: 1})
 	if err != nil {
-		t.Fatalf("UpdateAgent returned error: %v", err)
+		t.Fatal(err)
 	}
 	args := runner.calls[0].args
-	for _, expected := range []string{"--description", "--instructions", "--model", "--thinking-level", "--custom-args"} {
-		if !slices.Contains(args, expected) {
-			t.Fatalf("arguments do not contain %s: %v", expected, args)
+	for _, v := range []string{"--description", "--instructions", "--model", "--thinking-level", "--custom-args", "--runtime-config"} {
+		if !slices.Contains(args, v) {
+			t.Fatalf("missing %s: %v", v, args)
 		}
 	}
 }
-
 func TestCreateWorkspaceAgentUsesPublicTarget(t *testing.T) {
-	t.Parallel()
-	runner := &fakeRunner{stdout: []byte(`{"id":"agent-1","name":"Agent"}`)}
-	client := &CLI{Binary: "multica-test", Runner: runner}
-
-	_, err := client.CreateAgent(model.AgentInput{
-		Name:               "Agent",
-		RuntimeID:          "runtime-1",
-		Permission:         "workspace",
-		MaxConcurrentTasks: 2,
-	})
+	runner := &fakeRunner{stdout: []byte(`{"id":"a","name":"Agent"}`)}
+	c := &CLI{Runner: runner}
+	_, err := c.CreateAgent(model.AgentInput{Name: "Agent", RuntimeID: "r", Permission: "workspace", MaxConcurrentTasks: 2})
 	if err != nil {
-		t.Fatalf("CreateAgent returned error: %v", err)
+		t.Fatal(err)
 	}
-	args := runner.calls[0].args
-	if !slices.Contains(args, "--public-to-workspace") {
-		t.Fatalf("arguments do not contain workspace target: %v", args)
+	if !slices.Contains(runner.calls[0].args, "--public-to-workspace") {
+		t.Fatal(runner.calls[0].args)
 	}
 }
-
+func TestCreateAgentUsesMemberTargetsAndFiles(t *testing.T) {
+	id := "member-1"
+	runner := &fakeRunner{stdout: []byte(`{"id":"a","name":"Agent"}`)}
+	c := &CLI{Runner: runner}
+	_, err := c.CreateAgent(model.AgentInput{Name: "Agent", RuntimeID: "r", ManageRuntimeConfig: true, RuntimeConfig: map[string]any{"x": true}, PermissionMode: "public_to", InvocationTargets: []model.InvocationTarget{{TargetType: "member", TargetID: &id}}, ManageMCPConfig: true, MCPConfigFile: "mcp.json", MaxConcurrentTasks: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := runner.calls[0].args
+	for _, v := range []string{"--runtime-config", "--public-to-member", "member-1", "--mcp-config-file", "mcp.json"} {
+		if !slices.Contains(args, v) {
+			t.Fatalf("missing %s: %v", v, args)
+		}
+	}
+}
+func TestListAgentsIncludesArchived(t *testing.T) {
+	runner := &fakeRunner{stdout: []byte(`[]`)}
+	c := &CLI{Runner: runner}
+	if _, err := c.ListAgents(); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(runner.calls[0].args, "--include-archived") {
+		t.Fatal(runner.calls[0].args)
+	}
+}
+func TestRuntimeProfileAndSquadCommands(t *testing.T) {
+	runner := &fakeRunner{stdout: []byte(`{"id":"x"}`)}
+	c := &CLI{Runner: runner}
+	if _, err := c.CreateRuntimeProfile(model.RuntimeProfileInput{DisplayName: "Wrapper", ProtocolFamily: "codex", CommandName: "wrapper", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.CreateSquad(model.SquadInput{Name: "Team", LeaderID: "agent-1"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(runner.calls[0].args, " "); !strings.Contains(got, "runtime profile create") {
+		t.Fatal(got)
+	}
+	if got := strings.Join(runner.calls[1].args, " "); !strings.Contains(got, "squad create") || !strings.Contains(got, "--leader agent-1") {
+		t.Fatal(got)
+	}
+}
 func TestRunnerErrorIncludesStderr(t *testing.T) {
-	t.Parallel()
-	runner := &fakeRunner{stderr: []byte("authentication failed"), err: errors.New("exit status 1")}
-	client := &CLI{Binary: "multica-test", Runner: runner}
-
-	_, err := client.ListSkills()
+	runner := &fakeRunner{stderr: []byte("authentication failed"), err: errors.New("exit")}
+	c := &CLI{Runner: runner}
+	_, err := c.ListSkills()
 	if err == nil || !strings.Contains(err.Error(), "authentication failed") {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatal(err)
 	}
 }
