@@ -168,6 +168,31 @@ func TestExportForcePreservesUnrelated(t *testing.T) {
 		t.Fatal("stale path remains")
 	}
 }
+func TestExportForcePreservesNestedAgentDirectory(t *testing.T) {
+	out := filepath.Join(t.TempDir(), "export")
+	nested := filepath.Join(out, "agents", "main", "custom-unity")
+	if err := os.MkdirAll(nested, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(nested, "agent.yaml"), []byte("name: Unity Developer\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := (Exporter{Backend: exampleBackend()}).Export(Options{OutputDir: out, Force: true}); err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{
+		filepath.Join(out, "agents", "main", "custom-unity", "agent.yaml"),
+		filepath.Join(out, "agents", "reviewer", "agent.yaml"),
+	} {
+		if _, err := os.Stat(expected); err != nil {
+			t.Fatalf("expected exported agent at %s: %v", expected, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(out, "agents", "unity-developer")); !os.IsNotExist(err) {
+		t.Fatalf("matched agent was also exported at the default path: %v", err)
+	}
+}
 func TestExportRejectsUnsafeSkillPath(t *testing.T) {
 	b := exampleBackend()
 	b.skills[0].Files = []model.SkillFile{{ID: "f", Path: "../escape", Content: "x"}}

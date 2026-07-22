@@ -2,11 +2,108 @@ package exporter
 
 import (
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
+
+func preserveAgentDirectories(target string, agents []exportedAgent) error {
+	existing, err := existingAgentDirectories(target)
+	if err != nil {
+		return err
+	}
+	for i := range agents {
+		if directory, ok := existing[agents[i].document.Name]; ok {
+			agents[i].directory = directory
+		}
+	}
+
+	used := map[string]string{}
+	for _, agent := range agents {
+		directory := filepath.Clean(agent.directory)
+		if directory == "." || filepath.IsAbs(directory) || directory == ".." || strings.HasPrefix(directory, ".."+string(filepath.Separator)) {
+			return fmt.Errorf("unsafe export directory %q for agent %q", agent.directory, agent.document.Name)
+		}
+		if previous, ok := used[directory]; ok {
+			return fmt.Errorf("agents %q and %q would export to the same directory %s", previous, agent.document.Name, filepath.Join("agents", directory))
+		}
+		used[directory] = agent.document.Name
+	}
+	return nil
+}
+
+func existingAgentDirectories(target string) (map[string]string, error) {
+	directories := map[string]string{}
+	root := filepath.Join(target, "agents")
+	info, err := os.Lstat(root)
+	if os.IsNotExist(err) {
+		return directories, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("stat existing agents directory: %w", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return nil, fmt.Errorf("existing agents path must be a directory: %s", root)
+	}
+
+	err = filepath.WalkDir(root, func(current string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if current == root {
+			return nil
+		}
+		if entry.Type()&os.ModeSymlink != 0 {
+			return fmt.Errorf("existing agents tree must not contain symlinks: %s", current)
+		}
+		if !entry.IsDir() {
+			return nil
+		}
+
+		declaration := filepath.Join(current, "agent.yaml")
+		declarationInfo, statErr := os.Lstat(declaration)
+		if statErr != nil {
+			if os.IsNotExist(statErr) {
+				return nil
+			}
+			return fmt.Errorf("stat existing agent declaration %s: %w", declaration, statErr)
+		}
+		if !declarationInfo.Mode().IsRegular() {
+			return fmt.Errorf("existing agent declaration must be a regular file: %s", declaration)
+		}
+
+		data, readErr := os.ReadFile(declaration)
+		if readErr != nil {
+			return fmt.Errorf("read existing agent declaration %s: %w", declaration, readErr)
+		}
+		var identity struct {
+			Name string `yaml:"name"`
+		}
+		if decodeErr := yaml.Unmarshal(data, &identity); decodeErr != nil {
+			return fmt.Errorf("parse existing agent declaration %s: %w", declaration, decodeErr)
+		}
+		identity.Name = strings.TrimSpace(identity.Name)
+		if identity.Name == "" {
+			return fmt.Errorf("existing agent declaration %s must contain name", declaration)
+		}
+		relative, relErr := filepath.Rel(root, current)
+		if relErr != nil {
+			return fmt.Errorf("resolve existing agent directory %s: %w", current, relErr)
+		}
+		if previous, ok := directories[identity.Name]; ok {
+			return fmt.Errorf("duplicate existing agent name %q in %s and %s", identity.Name, filepath.Join(root, previous), current)
+		}
+		directories[identity.Name] = relative
+		return filepath.SkipDir
+	})
+	if err != nil {
+		return nil, err
+	}
+	return directories, nil
+}
 
 func writeSnapshot(root string, v snapshot) error {
 	for _, dir := range []string{"agents", "skills", "squads"} {

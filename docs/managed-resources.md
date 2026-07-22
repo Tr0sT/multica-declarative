@@ -24,6 +24,10 @@ skill. Directories without a marker are grouping directories, so layouts such as
 `agents/codex/builder/agent.yaml` and `skills/unity/testing/SKILL.md` require no manifest entries.
 Once a marker is found, discovery does not descend further into that resource directory.
 
+`export --force` preserves the relative directory of every existing agent it can match by the
+`name` in `agent.yaml`. Newly discovered Multica agents are written directly below `agents/` using
+their generated slug.
+
 ## Agents
 
 An agent may use the compact legacy form or the expanded form below.

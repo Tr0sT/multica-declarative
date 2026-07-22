@@ -138,6 +138,9 @@ func (e Exporter) Export(options Options) (Result, error) {
 	if len(snap.skills)+len(snap.agents)+len(snap.squads) == 0 {
 		return Result{}, fmt.Errorf("Multica workspace contains no exportable resources")
 	}
+	if err := preserveAgentDirectories(absolute, snap.agents); err != nil {
+		return Result{}, err
+	}
 	parent := filepath.Dir(absolute)
 	if err := os.MkdirAll(parent, 0755); err != nil {
 		return Result{}, err

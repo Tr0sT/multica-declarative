@@ -93,6 +93,11 @@ Refreshing is explicit:
 multica-declarative export --output-dir ./my-workspace --force
 ```
 
+During a refresh, existing `agents/**/agent.yaml` files are matched to Multica agents by `name`.
+Their relative directories are preserved, including grouping directories such as `agents/main/`
+and `agents/vds/`. An agent not already present in the export tree is created directly under
+`agents/<slug>/`.
+
 `--force` replaces only generated `multica.yaml`, `agents/`, `skills/`, and `squads/` paths.
 Unrelated files and `.git/` are preserved.
 
