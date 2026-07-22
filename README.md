@@ -2,9 +2,9 @@
 
 **Manage Multica agents and skills as code.**
 
-`multica-declarative` is a small declarative controller for [Multica](https://github.com/multica-ai/multica). It reads version-controlled YAML and Agent Skills directories, compares them with a Multica workspace, and applies the required changes through the official `multica` CLI.
+`multica-declarative` is a standalone Go CLI that reads version-controlled YAML and [Agent Skills](https://agentskills.io/) directories, compares them with a Multica workspace, and applies the required changes through the official `multica` CLI.
 
-The project exists because agents and skills configured only through a UI are difficult to review, diff, reproduce, and roll back. Git should hold the desired state and its history; Multica should remain the system that runs the applied state.
+The project exists because agents and skills configured only through a UI are hard to review, diff, reproduce, and roll back. Git should hold the desired state and its history; Multica should continue to own and run the applied state.
 
 > Status: early MVP. The file format is `v1alpha1` and can change.
 
@@ -32,13 +32,23 @@ The controller deliberately does **not**:
 - read or write Multica's database;
 - depend on undocumented HTTP endpoints;
 - replace the Multica CLI;
-- automatically delete remote objects that are absent from the repository.
+- delete undeclared top-level Multica resources.
 
 Multica is treated as a black box with a supported command-line interface.
 
-## Why
+## Why Go
 
-The intended workflow is infrastructure-as-code for agents:
+The first prototype was written in Python to validate the model quickly. The project is now implemented in Go so users get:
+
+- one self-contained executable;
+- no Python installation, virtual environment, or runtime dependencies;
+- straightforward Linux, macOS, Windows, and NixOS distribution;
+- typed configuration and reconciliation code;
+- fast startup and predictable deployment on Multica runtimes.
+
+The YAML parser is the only external Go dependency.
+
+## Intended workflow
 
 1. Edit an agent instruction, model, runtime binding, or skill in Git.
 2. Review the normal Git diff.
@@ -50,10 +60,9 @@ This gives us history, code review, reproducibility, drift visibility, and a pat
 
 ## Current MVP
 
-The first version supports:
+The current version supports:
 
-- loading a workspace manifest;
-- validating agent, skill, runtime, and file references;
+- loading and strictly validating a workspace manifest;
 - standard Agent Skills directories with `SKILL.md`;
 - additional UTF-8 files inside a skill directory;
 - declarative prompt agents;
@@ -63,13 +72,16 @@ The first version supports:
 - idempotent `apply` through the official Multica CLI;
 - full synchronization of files inside managed skills.
 
-The MVP matches existing skills and agents by exact name. Renaming a managed agent is therefore not yet a safe operation. Stable external identities and a local state file are planned before the format is considered stable.
+Existing skills and agents are matched by exact name. Renaming a managed object is therefore not safe yet. Stable external identities and a local state file are planned before the format is considered stable.
 
 ## Requirements
 
-- Python 3.11 or newer;
-- a recent `multica` CLI with JSON output for agents, skills, skill files, and runtimes;
-- an authenticated Multica CLI profile. Run `multica setup` first and verify that these commands work:
+To run a built binary:
+
+- a recent `multica` CLI;
+- an authenticated Multica CLI profile.
+
+Run `multica setup` first and verify:
 
 ```bash
 multica skill list --output json
@@ -79,23 +91,27 @@ multica runtime list --output json
 
 The controller inherits the Multica CLI environment and profile. It does not store Multica tokens.
 
-## Build
+Go 1.23 or newer is required only when building from source.
+
+## Install
+
+### Build from source
 
 ```bash
 git clone git@github.com:Tr0sT/multica-declarative.git
 cd multica-declarative
-python -m venv .venv
-source .venv/bin/activate
-python -m pip install -e .
+go build -o ./bin/multica-declarative ./cmd/multica-declarative
 ```
 
-Run the tests:
+Then either run `./bin/multica-declarative` or place it on `PATH`.
+
+### Install with Go
 
 ```bash
-python -m pip install -e ".[dev]"
-ruff check .
-pytest
+go install github.com/Tr0sT/multica-declarative/cmd/multica-declarative@latest
 ```
+
+Prebuilt release artifacts and Nix packaging are planned.
 
 ## Quick start
 
@@ -114,13 +130,18 @@ multica-declarative plan
 multica-declarative apply
 ```
 
-Use another manifest or Multica binary when needed:
+Flags may be written before or after the command:
 
 ```bash
-multica-declarative \
-  --config ./environments/home/multica.yaml \
-  --multica-bin /run/current-system/sw/bin/multica \
-  plan
+multica-declarative --config ./environments/home/multica.yaml plan
+multica-declarative plan --config ./environments/home/multica.yaml
+```
+
+Use another Multica binary when necessary:
+
+```bash
+multica-declarative plan \
+  --multica-bin /run/current-system/sw/bin/multica
 ```
 
 ## Workspace manifest
@@ -148,7 +169,7 @@ runtimes:
     provider: codex
 ```
 
-Runtime selectors can use:
+Runtime selectors can use any combination of:
 
 ```yaml
 runtimes:
@@ -166,9 +187,11 @@ runtimes:
 
 A selector must match exactly one runtime. Zero or multiple matches stop `plan` and `apply` instead of guessing.
 
+Unknown fields in `multica.yaml` and agent YAML files are rejected. This is intentional: a misspelled field must not silently produce a different agent.
+
 ## Skills
 
-Skills use the open [Agent Skills](https://agentskills.io/) directory format. Every declared skill directory must contain `SKILL.md` with YAML frontmatter:
+Skills use the open Agent Skills directory format. Every declared skill directory must contain `SKILL.md` with YAML frontmatter:
 
 ```markdown
 ---
@@ -195,6 +218,8 @@ skills/unity-development/
 ```
 
 The current Multica skill-file API is text-oriented, so the MVP accepts non-empty UTF-8 files only. Binary assets are not supported yet.
+
+The contents of a declared skill directory are fully managed. A remote file inside that skill which is absent locally is deleted during `apply`.
 
 ## Agents
 
@@ -239,7 +264,7 @@ instructionsFile: AGENT.md
 Supported permissions:
 
 - `private`: only the owner can invoke the agent;
-- `workspace`: the agent is invokable by the workspace.
+- `workspace`: every workspace member can invoke the agent.
 
 ## Commands
 
@@ -253,7 +278,7 @@ multica-declarative validate
 
 ### `plan`
 
-Reads actual state through `multica ... --output json` and prints the proposed changes without mutating Multica.
+Reads actual state through `multica ... --output json` and prints proposed changes without mutating Multica.
 
 ```bash
 multica-declarative plan
@@ -277,21 +302,20 @@ Creates missing managed resources and updates drifted managed resources.
 multica-declarative apply
 ```
 
-`apply` is intended to be idempotent: running it again with the same files should produce no further changes.
+`apply` is intended to converge: running it again with the same declarations should produce no further changes.
 
 ## Safety model
 
-The MVP follows several conservative rules:
+The MVP follows conservative rules:
 
 - only resources explicitly declared in the manifest are managed;
-- undeclared Multica skills and agents are left untouched;
+- undeclared Multica skills and agents are untouched;
 - no pruning or destructive deletion of top-level resources exists yet;
-- skill files are fully managed inside each declared skill, so a remote skill file absent locally is deleted;
+- skill files are fully managed inside each declared skill;
 - runtime selectors must be unambiguous;
 - duplicate agents with the same exact name cause an error;
-- secrets and custom environment variables are intentionally outside the first version.
-
-Skill-file deletion is the one destructive reconciliation operation in the MVP because the contents of a declared skill directory are treated as a complete unit.
+- secrets and custom environment variables are outside the first version;
+- CLI failures include stderr but secret values are never introduced by this tool.
 
 ## Relationship to existing formats
 
@@ -304,11 +328,29 @@ The project avoids inventing everything from scratch:
 
 Oracle Agent Spec may become an import/export adapter later, but implementing the entire cross-framework specification is outside the MVP.
 
+## Development
+
+```bash
+go fmt ./...
+go vet ./...
+go test ./...
+go build ./cmd/multica-declarative
+```
+
+Or:
+
+```bash
+make check
+make build
+```
+
+The backend is represented by a Go interface, so reconciliation is tested without a real Multica workspace. Separate tests verify the generated `multica` CLI arguments.
+
 ## Planned work
 
-The likely next steps are:
+Likely next steps:
 
-1. stable local resource keys and a Terraform-like state file so agents can be renamed safely;
+1. stable local resource keys and a Terraform-like state file so objects can be renamed safely;
 2. `export` to bootstrap declarations from an existing Multica workspace;
 3. explicit drift reporting and machine-readable plans;
 4. JSON Schema files and editor completion;
