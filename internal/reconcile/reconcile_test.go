@@ -22,7 +22,7 @@ type fakeBackend struct {
 	updatedAgent bool
 }
 
-func (f *fakeBackend) ListSkills() ([]model.Skill, error) { return f.skills, nil }
+func (f *fakeBackend) ListSkills() ([]model.Skill, error)   { return f.skills, nil }
 func (f *fakeBackend) GetSkill(string) (model.Skill, error) { return f.skill, nil }
 func (f *fakeBackend) CreateSkill(model.SkillInput) (model.Skill, error) {
 	return model.Skill{ID: "created-skill", Name: "unity"}, nil
@@ -39,7 +39,7 @@ func (f *fakeBackend) DeleteSkillFile(_, fileID string) error {
 	f.deleted = append(f.deleted, fileID)
 	return nil
 }
-func (f *fakeBackend) ListAgents() ([]model.Agent, error) { return f.agents, nil }
+func (f *fakeBackend) ListAgents() ([]model.Agent, error)   { return f.agents, nil }
 func (f *fakeBackend) GetAgent(string) (model.Agent, error) { return f.agent, nil }
 func (f *fakeBackend) ListAgentSkills(string) ([]model.SkillSummary, error) {
 	return f.agentSkills, nil
