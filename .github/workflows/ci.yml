@@ -21,7 +21,16 @@ jobs:
       - name: Check formatting
         run: test -z "$(gofmt -l .)"
       - run: go vet ./...
-      - run: go test ./...
+      - name: Run tests
+        run: |
+          set -o pipefail
+          go test ./... -v 2>&1 | tee go-test.log
+      - name: Upload test log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: go-test-log
+          path: go-test.log
       - run: go build -o ./bin/multica-declarative ./cmd/multica-declarative
       - run: ./bin/multica-declarative --version
       - run: ./bin/multica-declarative validate --config examples/basic/multica.yaml
