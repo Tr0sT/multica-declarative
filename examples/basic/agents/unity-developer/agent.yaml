@@ -1,0 +1,17 @@
+kind: Prompt
+name: Unity Developer
+description: Implements and reviews Unity client tasks.
+instructionsFile: AGENT.md
+
+model:
+  id: gpt-5.6
+
+skills:
+  - unity-development
+
+multica:
+  runtime: main-desktop
+  thinkingLevel: high
+  maxConcurrentTasks: 1
+  permission: private
+  customArgs: []
