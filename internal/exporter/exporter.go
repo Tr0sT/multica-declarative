@@ -90,7 +90,6 @@ type permissionDocument struct {
 	Members   []string `yaml:"members,omitempty"`
 }
 type agentDocument struct {
-	Kind             string          `yaml:"kind"`
 	Name             string          `yaml:"name"`
 	Description      string          `yaml:"description,omitempty"`
 	InstructionsFile string          `yaml:"instructionsFile"`
@@ -282,7 +281,7 @@ func (e Exporter) readSnapshot() (snapshot, error) {
 			md = &modelDocument{ID: a.Model}
 		}
 		dir := uniqueSlug(a.Name, a.ID, usedAgents)
-		ea := exportedAgent{directory: dir, instructions: a.Instructions, document: agentDocument{Kind: "Prompt", Name: a.Name, Description: a.Description, InstructionsFile: "AGENT.md", Model: md, Skills: assignments, Multica: multicaDocument{Runtime: aliases[a.RuntimeID], RuntimeConfig: a.RuntimeConfig, ThinkingLevel: a.ThinkingLevel, MaxConcurrentTasks: normalizedConcurrency(a.MaxConcurrentTasks), Permission: permission, CustomArgs: append([]string(nil), a.CustomArgs...), Archived: a.Archived(), DisabledRuntimeSkills: append([]model.DisabledRuntimeSkill(nil), a.DisabledRuntimeSkills...), ComposioToolkitAllowlist: append([]string(nil), a.ComposioToolkitAllowlist...)}}}
+		ea := exportedAgent{directory: dir, instructions: a.Instructions, document: agentDocument{Name: a.Name, Description: a.Description, InstructionsFile: "AGENT.md", Model: md, Skills: assignments, Multica: multicaDocument{Runtime: aliases[a.RuntimeID], RuntimeConfig: a.RuntimeConfig, ThinkingLevel: a.ThinkingLevel, MaxConcurrentTasks: normalizedConcurrency(a.MaxConcurrentTasks), Permission: permission, CustomArgs: append([]string(nil), a.CustomArgs...), Archived: a.Archived(), DisabledRuntimeSkills: append([]model.DisabledRuntimeSkill(nil), a.DisabledRuntimeSkills...), ComposioToolkitAllowlist: append([]string(nil), a.ComposioToolkitAllowlist...)}}}
 		if a.AvatarURL != nil && *a.AvatarURL != "" {
 			data, name, downloadErr := e.downloadAvatar(*a.AvatarURL)
 			if downloadErr != nil {

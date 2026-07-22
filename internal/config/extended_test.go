@@ -25,8 +25,7 @@ runtimes:
 	writeExtendedFile(t, filepath.Join(root, "agents/builder/AGENT.md"), "Build.\n")
 	writeExtendedFile(t, filepath.Join(root, "agents/builder/env.json"), `{"TOKEN":"value"}`)
 	writeExtendedFile(t, filepath.Join(root, "agents/builder/mcp.json"), `{"mcpServers":{}}`)
-	writeExtendedFile(t, filepath.Join(root, "agents/builder/agent.yaml"), `kind: Prompt
-name: Builder
+	writeExtendedFile(t, filepath.Join(root, "agents/builder/agent.yaml"), `name: Builder
 instructionsFile: AGENT.md
 skills:
   - name: unity

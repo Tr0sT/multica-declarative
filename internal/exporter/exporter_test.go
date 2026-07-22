@@ -107,6 +107,13 @@ func TestExportCreatesRoundTrippableSnapshot(t *testing.T) {
 	if result.Skills != 1 || result.Agents != 2 || result.Squads != 1 || result.RuntimeProfiles != 1 {
 		t.Fatalf("%#v", result)
 	}
+	agentYAML, err := os.ReadFile(filepath.Join(out, "agents", "unity-developer", "agent.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(agentYAML), "kind:") {
+		t.Fatalf("agent declaration contains redundant kind field:\n%s", agentYAML)
+	}
 	project, err := config.Load(filepath.Join(out, "multica.yaml"))
 	if err != nil {
 		t.Fatal(err)

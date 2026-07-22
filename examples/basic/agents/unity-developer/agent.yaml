@@ -1,4 +1,3 @@
-kind: Prompt
 name: Unity Developer
 description: Implements and reviews Unity client tasks.
 instructionsFile: AGENT.md

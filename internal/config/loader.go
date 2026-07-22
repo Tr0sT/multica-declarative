@@ -19,7 +19,6 @@ import (
 const (
 	apiVersion         = "multica-declarative/v1alpha1"
 	workspaceKind      = "Workspace"
-	agentKind          = "Prompt"
 	squadKind          = "Squad"
 	runtimeProfileKind = "RuntimeProfile"
 )
@@ -110,7 +109,6 @@ func (p *permissionDocument) UnmarshalYAML(node *yaml.Node) error {
 }
 
 type agentDocument struct {
-	Kind             string                   `yaml:"kind"`
 	Name             string                   `yaml:"name"`
 	Description      string                   `yaml:"description"`
 	Instructions     string                   `yaml:"instructions"`
@@ -249,13 +247,6 @@ func loadAgent(path string) (model.AgentSpec, error) {
 	var d agentDocument
 	if err := decodeStrictYAML(path, &d); err != nil {
 		return model.AgentSpec{}, err
-	}
-	kind := strings.TrimSpace(d.Kind)
-	if kind == "" {
-		kind = agentKind
-	}
-	if kind != agentKind {
-		return model.AgentSpec{}, fmt.Errorf("%s: unsupported agent kind %q", path, kind)
 	}
 	name := strings.TrimSpace(d.Name)
 	if name == "" {

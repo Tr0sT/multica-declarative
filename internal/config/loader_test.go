@@ -32,8 +32,7 @@ metadata:
 `)
 	writeFile(t, filepath.Join(root, "skills/unity/references/testing.md"), "# Tests\n")
 	writeFile(t, filepath.Join(root, "agents/instructions.md"), "Do the work.\n")
-	writeFile(t, filepath.Join(root, "agents/unity.yaml"), `kind: Prompt
-name: Unity Developer
+	writeFile(t, filepath.Join(root, "agents/unity.yaml"), `name: Unity Developer
 instructionsFile: instructions.md
 skills: [unity-development]
 multica:
@@ -67,8 +66,7 @@ runtimes:
   desktop:
     name: desktop
 `)
-	writeFile(t, filepath.Join(root, "agent.yaml"), `kind: Prompt
-name: Agent
+	writeFile(t, filepath.Join(root, "agent.yaml"), `name: Agent
 skills: [missing]
 multica:
   runtime: desktop
@@ -97,6 +95,28 @@ description: Example
 	_, err := Load(filepath.Join(root, "multica.yaml"))
 	if err == nil || !strings.Contains(err.Error(), "unexpected") {
 		t.Fatalf("expected strict YAML error, got %v", err)
+	}
+}
+
+func TestRejectsAgentKindField(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "multica.yaml"), `apiVersion: multica-declarative/v1alpha1
+kind: Workspace
+agents: [agent.yaml]
+runtimes:
+  desktop:
+    name: desktop
+`)
+	writeFile(t, filepath.Join(root, "agent.yaml"), `kind: Prompt
+name: Agent
+multica:
+  runtime: desktop
+`)
+
+	_, err := Load(filepath.Join(root, "multica.yaml"))
+	if err == nil || !strings.Contains(err.Error(), "field kind not found") {
+		t.Fatalf("expected strict agent kind error, got %v", err)
 	}
 }
 

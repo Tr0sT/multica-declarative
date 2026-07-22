@@ -33,7 +33,6 @@ runtimes:
 An agent may use the compact legacy form or the expanded form below.
 
 ```yaml
-kind: Prompt
 name: Unity Builder
 description: Implements Unity tasks.
 instructionsFile: AGENT.md
