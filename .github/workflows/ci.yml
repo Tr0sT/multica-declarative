@@ -21,13 +21,16 @@ jobs:
       - name: Check formatting
         run: |
           gofmt -l . | tee gofmt-files.txt
+          gofmt -d . > gofmt.diff
           test ! -s gofmt-files.txt
       - name: Upload formatting report
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: gofmt-files
-          path: gofmt-files.txt
+          name: gofmt-report
+          path: |
+            gofmt-files.txt
+            gofmt.diff
       - run: go vet ./...
       - run: go test ./...
       - run: go build -o ./bin/multica-declarative ./cmd/multica-declarative
