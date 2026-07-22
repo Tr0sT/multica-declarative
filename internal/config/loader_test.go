@@ -137,6 +137,7 @@ func TestRejectsRemovedWorkspaceFields(t *testing.T) {
 		{name: "kind", field: "kind", value: "Workspace"},
 		{name: "skills", field: "skills", value: "[]"},
 		{name: "agents", field: "agents", value: "[]"},
+		{name: "squads", field: "squads", value: "[]"},
 	}
 	for _, test := range tests {
 		test := test

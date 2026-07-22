@@ -23,7 +23,6 @@ const (
 
 type workspaceDocument struct {
 	APIVersion string                     `yaml:"apiVersion"`
-	Squads     []string                   `yaml:"squads"`
 	Runtimes   map[string]runtimeDocument `yaml:"runtimes"`
 }
 
@@ -196,12 +195,12 @@ func Load(workspacePath string) (model.Project, error) {
 		}
 		project.Agents = append(project.Agents, v)
 	}
-	for _, item := range doc.Squads {
-		p, err := resolvePath(base, item)
-		if err != nil {
-			return project, err
-		}
-		v, err := loadSquad(p)
+	squadDirs, err := discoverResourceDirectories(base, "squads", "squad.yaml")
+	if err != nil {
+		return project, err
+	}
+	for _, directory := range squadDirs {
+		v, err := loadSquad(filepath.Join(directory, "squad.yaml"))
 		if err != nil {
 			return project, err
 		}

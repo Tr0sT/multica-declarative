@@ -7,7 +7,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -64,7 +63,6 @@ type exportedSquad struct {
 }
 type workspaceDocument struct {
 	APIVersion string                     `yaml:"apiVersion"`
-	Squads     []string                   `yaml:"squads,omitempty"`
 	Runtimes   map[string]runtimeDocument `yaml:"runtimes,omitempty"`
 }
 type runtimeDocument struct {
@@ -368,9 +366,6 @@ func (e Exporter) readSnapshot() (snapshot, error) {
 		}
 	}
 	manifest := workspaceDocument{APIVersion: apiVersion, Runtimes: runtimeDocs}
-	for _, v := range squads {
-		manifest.Squads = append(manifest.Squads, path.Join("squads", v.directory, "squad.yaml"))
-	}
 	return snapshot{manifest: manifest, skills: skills, agents: agents, squads: squads, warnings: warnings}, nil
 }
 

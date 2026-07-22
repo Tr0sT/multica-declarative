@@ -9,20 +9,18 @@ direct database access or an undocumented HTTP endpoint.
 ```yaml
 apiVersion: multica-declarative/v1alpha1
 
-squads:
-  - squads/unity-team/squad.yaml
-
 runtimes:
   desktop:
     customName: Main PC
     provider: codex
 ```
 
-Agent and skill declarations are discovered recursively. Every directory below `agents/` that
-contains `agent.yaml` is an agent; every directory below `skills/` that contains `SKILL.md` is a
-skill. Directories without a marker are grouping directories, so layouts such as
-`agents/codex/builder/agent.yaml` and `skills/unity/testing/SKILL.md` require no manifest entries.
-Once a marker is found, discovery does not descend further into that resource directory.
+Agent, skill, and squad declarations are discovered recursively. Every directory below `agents/`
+that contains `agent.yaml` is an agent; `SKILL.md` below `skills/` and `squad.yaml` below `squads/`
+define the other resource roots. Directories without a marker are grouping directories, so layouts
+such as `agents/codex/builder/agent.yaml`, `skills/unity/testing/SKILL.md`, and
+`squads/gameplay/reviewers/squad.yaml` require no manifest entries. Once a marker is found,
+discovery does not descend further into that resource directory.
 
 `export --force` preserves the relative directory of every existing agent it can match by the
 `name` in `agent.yaml`. Newly discovered Multica agents are written directly below `agents/` using

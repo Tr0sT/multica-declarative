@@ -9,7 +9,6 @@ import (
 func TestLoadExtendedAgentAndSquad(t *testing.T) {
 	root := t.TempDir()
 	writeExtendedFile(t, filepath.Join(root, "multica.yaml"), `apiVersion: multica-declarative/v1alpha1
-squads: [squads/unity/squad.yaml]
 runtimes:
   desktop:
     name: desktop
@@ -40,8 +39,8 @@ multica:
   composioToolkitAllowlist: [github]
 `)
 	writeExtendedFile(t, filepath.Join(root, "agents/reviewer/agent.yaml"), "name: Reviewer\nmultica:\n  runtime: desktop\n")
-	writeExtendedFile(t, filepath.Join(root, "squads/unity/SQUAD.md"), "Coordinate.\n")
-	writeExtendedFile(t, filepath.Join(root, "squads/unity/squad.yaml"), `kind: Squad
+	writeExtendedFile(t, filepath.Join(root, "squads/teams/unity/SQUAD.md"), "Coordinate.\n")
+	writeExtendedFile(t, filepath.Join(root, "squads/teams/unity/squad.yaml"), `kind: Squad
 name: Unity Team
 leader: Builder
 instructionsFile: SQUAD.md

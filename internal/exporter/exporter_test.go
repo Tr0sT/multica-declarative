@@ -117,7 +117,7 @@ func TestExportCreatesRoundTrippableSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, removed := range []string{"kind:", "skills:", "agents:"} {
+	for _, removed := range []string{"kind:", "skills:", "agents:", "squads:"} {
 		if strings.Contains(string(manifestYAML), removed) {
 			t.Fatalf("workspace manifest contains removed %s field:\n%s", removed, manifestYAML)
 		}
