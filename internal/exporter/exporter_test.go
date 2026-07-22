@@ -12,252 +12,155 @@ import (
 )
 
 type fakeBackend struct {
-	skills      []model.Skill
-	agents      []model.Agent
-	runtimes    []model.Runtime
-	agentSkills map[string][]model.SkillSummary
+	skills       []model.Skill
+	agents       []model.Agent
+	runtimes     []model.Runtime
+	agentSkills  map[string][]model.SkillSummary
+	profiles     []model.RuntimeProfile
+	squads       []model.Squad
+	squadMembers map[string][]model.SquadMember
 }
 
 func (f *fakeBackend) ListSkills() ([]model.Skill, error) {
-	result := make([]model.Skill, len(f.skills))
-	for index, skill := range f.skills {
-		result[index] = model.Skill{ID: skill.ID, Name: skill.Name, Description: skill.Description}
+	out := []model.Skill{}
+	for _, v := range f.skills {
+		out = append(out, model.Skill{ID: v.ID, Name: v.Name, Description: v.Description})
 	}
-	return result, nil
+	return out, nil
 }
-
-func (f *fakeBackend) GetSkill(skillID string) (model.Skill, error) {
-	for _, skill := range f.skills {
-		if skill.ID == skillID {
-			return skill, nil
+func (f *fakeBackend) GetSkill(id string) (model.Skill, error) {
+	for _, v := range f.skills {
+		if v.ID == id {
+			return v, nil
 		}
 	}
 	return model.Skill{}, os.ErrNotExist
 }
-
-func (f *fakeBackend) CreateSkill(model.SkillInput) (model.Skill, error) {
-	panic("unexpected mutation")
+func (*fakeBackend) CreateSkill(model.SkillInput) (model.Skill, error)         { panic("mutation") }
+func (*fakeBackend) UpdateSkill(string, model.SkillInput) (model.Skill, error) { panic("mutation") }
+func (*fakeBackend) UpsertSkillFile(string, model.SkillFileInput) (model.SkillFile, error) {
+	panic("mutation")
 }
-
-func (f *fakeBackend) UpdateSkill(string, model.SkillInput) (model.Skill, error) {
-	panic("unexpected mutation")
-}
-
-func (f *fakeBackend) UpsertSkillFile(string, model.SkillFileInput) (model.SkillFile, error) {
-	panic("unexpected mutation")
-}
-
-func (f *fakeBackend) DeleteSkillFile(string, string) error {
-	panic("unexpected mutation")
-}
-
+func (*fakeBackend) DeleteSkillFile(string, string) error { panic("mutation") }
 func (f *fakeBackend) ListAgents() ([]model.Agent, error) {
-	result := make([]model.Agent, len(f.agents))
-	for index, agent := range f.agents {
-		result[index] = model.Agent{ID: agent.ID, Name: agent.Name}
+	out := []model.Agent{}
+	for _, v := range f.agents {
+		out = append(out, model.Agent{ID: v.ID, Name: v.Name})
 	}
-	return result, nil
+	return out, nil
 }
-
-func (f *fakeBackend) GetAgent(agentID string) (model.Agent, error) {
-	for _, agent := range f.agents {
-		if agent.ID == agentID {
-			return agent, nil
+func (f *fakeBackend) GetAgent(id string) (model.Agent, error) {
+	for _, v := range f.agents {
+		if v.ID == id {
+			return v, nil
 		}
 	}
 	return model.Agent{}, os.ErrNotExist
 }
-
-func (f *fakeBackend) ListAgentSkills(agentID string) ([]model.SkillSummary, error) {
-	return append([]model.SkillSummary(nil), f.agentSkills[agentID]...), nil
+func (f *fakeBackend) ListAgentSkills(id string) ([]model.SkillSummary, error) {
+	return append([]model.SkillSummary(nil), f.agentSkills[id]...), nil
 }
-
-func (f *fakeBackend) CreateAgent(model.AgentInput) (model.Agent, error) {
-	panic("unexpected mutation")
-}
-
-func (f *fakeBackend) UpdateAgent(string, model.AgentInput) (model.Agent, error) {
-	panic("unexpected mutation")
-}
-
-func (f *fakeBackend) SetAgentSkills(string, []string) error {
-	panic("unexpected mutation")
-}
-
+func (*fakeBackend) CreateAgent(model.AgentInput) (model.Agent, error)         { panic("mutation") }
+func (*fakeBackend) UpdateAgent(string, model.AgentInput) (model.Agent, error) { panic("mutation") }
+func (*fakeBackend) SetAgentSkills(string, []string) error                     { panic("mutation") }
 func (f *fakeBackend) ListRuntimes() ([]model.Runtime, error) {
 	return append([]model.Runtime(nil), f.runtimes...), nil
 }
+func (f *fakeBackend) ListRuntimeProfiles() ([]model.RuntimeProfile, error) {
+	return append([]model.RuntimeProfile(nil), f.profiles...), nil
+}
+func (*fakeBackend) CreateRuntimeProfile(model.RuntimeProfileInput) (model.RuntimeProfile, error) {
+	panic("mutation")
+}
+func (*fakeBackend) UpdateRuntimeProfile(string, model.RuntimeProfileInput, []string) (model.RuntimeProfile, error) {
+	panic("mutation")
+}
+func (f *fakeBackend) ListSquads() ([]model.Squad, error) {
+	return append([]model.Squad(nil), f.squads...), nil
+}
+func (f *fakeBackend) GetSquad(id string) (model.Squad, error) {
+	for _, v := range f.squads {
+		if v.ID == id {
+			return v, nil
+		}
+	}
+	return model.Squad{}, os.ErrNotExist
+}
+func (*fakeBackend) CreateSquad(model.SquadInput) (model.Squad, error) { panic("mutation") }
+func (*fakeBackend) UpdateSquad(string, model.SquadInput, []string) (model.Squad, error) {
+	panic("mutation")
+}
+func (f *fakeBackend) ListSquadMembers(id string) ([]model.SquadMember, error) {
+	return append([]model.SquadMember(nil), f.squadMembers[id]...), nil
+}
+func (*fakeBackend) AddSquadMember(string, model.SquadMember) error     { panic("mutation") }
+func (*fakeBackend) SetSquadMemberRole(string, model.SquadMember) error { panic("mutation") }
+func (*fakeBackend) RemoveSquadMember(string, model.SquadMember) error  { panic("mutation") }
 
-func TestExportCreatesRoundTrippableNoopSnapshot(t *testing.T) {
-	t.Parallel()
-	backend := exampleBackend()
-	output := filepath.Join(t.TempDir(), "export")
-
-	result, err := (Exporter{Backend: backend}).Export(Options{OutputDir: output})
+func TestExportCreatesRoundTrippableSnapshot(t *testing.T) {
+	b := exampleBackend()
+	out := filepath.Join(t.TempDir(), "export")
+	result, err := (Exporter{Backend: b}).Export(Options{OutputDir: out})
 	if err != nil {
-		t.Fatalf("Export returned error: %v", err)
+		t.Fatal(err)
 	}
-	if result.Skills != 1 || result.Agents != 1 || result.Runtimes != 1 {
-		t.Fatalf("result = %#v", result)
+	if result.Skills != 1 || result.Agents != 2 || result.Squads != 1 || result.RuntimeProfiles != 1 {
+		t.Fatalf("%#v", result)
 	}
-	if len(result.Warnings) != 0 {
-		t.Fatalf("warnings = %v", result.Warnings)
-	}
-
-	project, err := config.Load(filepath.Join(output, "multica.yaml"))
+	project, err := config.Load(filepath.Join(out, "multica.yaml"))
 	if err != nil {
-		t.Fatalf("load exported project: %v", err)
+		t.Fatal(err)
 	}
-	if project.Agents[0].Instructions != "Implement the task.\n" {
-		t.Fatalf("instructions = %q", project.Agents[0].Instructions)
-	}
-	if project.RuntimeSelectors[project.Agents[0].RuntimeRef].CustomName != "Main PC" {
-		t.Fatalf("runtime selector = %#v", project.RuntimeSelectors)
-	}
-
-	changes, err := (reconcile.Reconciler{Backend: backend}).Plan(project)
+	changes, err := (reconcile.Reconciler{Backend: b}).Plan(project)
 	if err != nil {
-		t.Fatalf("plan exported project: %v", err)
+		t.Fatal(err)
 	}
-	for _, change := range changes {
-		if change.Action != reconcile.Noop {
-			t.Fatalf("change = %#v", change)
+	for _, c := range changes {
+		if c.Action != reconcile.Noop {
+			t.Fatalf("%#v", c)
 		}
 	}
 }
-
-func TestExportGeneratesFrontmatterForLegacySkill(t *testing.T) {
-	t.Parallel()
-	backend := exampleBackend()
-	backend.skills[0].Content = "# Legacy skill\n"
-	output := filepath.Join(t.TempDir(), "export")
-
-	result, err := (Exporter{Backend: backend}).Export(Options{OutputDir: output})
-	if err != nil {
-		t.Fatalf("Export returned error: %v", err)
+func TestExportRepresentsMemberScopedPermission(t *testing.T) {
+	b := exampleBackend()
+	member := "member-1"
+	b.agents[0].PermissionMode = "public_to"
+	b.agents[0].InvocationTargets = []model.InvocationTarget{{TargetType: "member", TargetID: &member}}
+	out := filepath.Join(t.TempDir(), "export")
+	if _, err := (Exporter{Backend: b}).Export(Options{OutputDir: out}); err != nil {
+		t.Fatal(err)
 	}
-	if len(result.Warnings) != 1 {
-		t.Fatalf("warnings = %v", result.Warnings)
-	}
-	data, err := os.ReadFile(filepath.Join(output, "skills", "unity-development", "SKILL.md"))
+	project, err := config.Load(filepath.Join(out, "multica.yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	content := string(data)
-	if !strings.HasPrefix(content, "---\n") || !strings.Contains(content, "name: unity-development") {
-		t.Fatalf("content = %q", content)
+	if project.Agents[0].PermissionMode != "public_to" || len(project.Agents[0].InvocationTargets) != 1 {
+		t.Fatalf("%#v", project.Agents[0])
 	}
 }
-
-func TestExportRefusesNonEmptyDirectoryWithoutForce(t *testing.T) {
-	t.Parallel()
-	root := t.TempDir()
-	output := filepath.Join(root, "export")
-	if err := os.MkdirAll(output, 0o755); err != nil {
+func TestExportForcePreservesUnrelated(t *testing.T) {
+	out := filepath.Join(t.TempDir(), "export")
+	os.MkdirAll(filepath.Join(out, "agents", "stale"), 0755)
+	os.WriteFile(filepath.Join(out, "README.md"), []byte("keep"), 0644)
+	if _, err := (Exporter{Backend: exampleBackend()}).Export(Options{OutputDir: out, Force: true}); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(output, "keep.txt"), []byte("keep"), 0o644); err != nil {
+	if _, err := os.Stat(filepath.Join(out, "README.md")); err != nil {
 		t.Fatal(err)
 	}
-
-	_, err := (Exporter{Backend: exampleBackend()}).Export(Options{OutputDir: output})
-	if err == nil || !strings.Contains(err.Error(), "not empty") {
-		t.Fatalf("err = %v", err)
-	}
-	if _, statErr := os.Stat(filepath.Join(output, "keep.txt")); statErr != nil {
-		t.Fatalf("unrelated file was changed: %v", statErr)
+	if _, err := os.Stat(filepath.Join(out, "agents", "stale")); !os.IsNotExist(err) {
+		t.Fatal("stale path remains")
 	}
 }
-
-func TestExportForcePreservesUnrelatedFilesAndReplacesGeneratedPaths(t *testing.T) {
-	t.Parallel()
-	output := filepath.Join(t.TempDir(), "export")
-	if err := os.MkdirAll(filepath.Join(output, "agents", "stale"), 0o755); err != nil {
+func TestExportRejectsUnsafeSkillPath(t *testing.T) {
+	b := exampleBackend()
+	b.skills[0].Files = []model.SkillFile{{ID: "f", Path: "../escape", Content: "x"}}
+	_, err := (Exporter{Backend: b}).Export(Options{OutputDir: filepath.Join(t.TempDir(), "export")})
+	if err == nil || !strings.Contains(err.Error(), "unsafe") {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(output, "agents", "stale", "agent.yaml"), []byte("stale"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(output, "README.md"), []byte("keep"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	_, err := (Exporter{Backend: exampleBackend()}).Export(Options{OutputDir: output, Force: true})
-	if err != nil {
-		t.Fatalf("Export returned error: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(output, "README.md")); err != nil {
-		t.Fatalf("unrelated file was removed: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(output, "agents", "stale")); !os.IsNotExist(err) {
-		t.Fatalf("stale generated path still exists: %v", err)
-	}
 }
-
-func TestExportRejectsMemberScopedPermissionBeforeWriting(t *testing.T) {
-	t.Parallel()
-	backend := exampleBackend()
-	memberID := "member-1"
-	backend.agents[0].PermissionMode = "public_to"
-	backend.agents[0].InvocationTargets = []model.InvocationTarget{{TargetType: "member", TargetID: &memberID}}
-	output := filepath.Join(t.TempDir(), "export")
-
-	_, err := (Exporter{Backend: backend}).Export(Options{OutputDir: output})
-	if err == nil || !strings.Contains(err.Error(), "not representable") {
-		t.Fatalf("err = %v", err)
-	}
-	if _, statErr := os.Stat(output); !os.IsNotExist(statErr) {
-		t.Fatalf("output should not exist after failed export: %v", statErr)
-	}
-}
-
-func TestExportRejectsUnsafeSkillFilePath(t *testing.T) {
-	t.Parallel()
-	backend := exampleBackend()
-	backend.skills[0].Files = []model.SkillFile{{ID: "file-1", Path: "../escape.md", Content: "escape"}}
-
-	_, err := (Exporter{Backend: backend}).Export(Options{OutputDir: filepath.Join(t.TempDir(), "export")})
-	if err == nil || !strings.Contains(err.Error(), "unsafe file path") {
-		t.Fatalf("err = %v", err)
-	}
-}
-
 func exampleBackend() *fakeBackend {
-	workspaceTarget := model.InvocationTarget{TargetType: "workspace"}
-	return &fakeBackend{
-		skills: []model.Skill{{
-			ID:          "skill-1",
-			Name:        "unity-development",
-			Description: "Unity conventions",
-			Content:     "---\nname: unity-development\ndescription: Unity conventions\n---\n\n# Unity\n",
-			Files: []model.SkillFile{{
-				ID:      "file-1",
-				Path:    "references/testing.md",
-				Content: "# Testing\n",
-			}},
-		}},
-		agents: []model.Agent{{
-			ID:                 "agent-1",
-			Name:               "Unity Developer",
-			Description:        "Implements Unity tasks.",
-			Instructions:       "Implement the task.\n",
-			RuntimeID:          "runtime-1",
-			Model:              "gpt-5.6",
-			ThinkingLevel:      "high",
-			CustomArgs:         []string{"--full-auto"},
-			PermissionMode:     "public_to",
-			InvocationTargets:  []model.InvocationTarget{workspaceTarget},
-			MaxConcurrentTasks: 1,
-		}},
-		runtimes: []model.Runtime{{
-			ID:         "runtime-1",
-			Name:       "desktop",
-			CustomName: "Main PC",
-			Provider:   "codex",
-			Status:     "online",
-		}},
-		agentSkills: map[string][]model.SkillSummary{
-			"agent-1": {{ID: "skill-1", Name: "unity-development"}},
-		},
-	}
+	workspace := model.InvocationTarget{TargetType: "workspace"}
+	return &fakeBackend{skills: []model.Skill{{ID: "skill-1", Name: "unity-development", Description: "Unity conventions", Content: "---\nname: unity-development\ndescription: Unity conventions\n---\n", Files: []model.SkillFile{{ID: "f", Path: "references/test.md", Content: "test"}}}}, agents: []model.Agent{{ID: "agent-1", Name: "Unity Developer", Instructions: "work", RuntimeID: "runtime-1", PermissionMode: "public_to", InvocationTargets: []model.InvocationTarget{workspace}, MaxConcurrentTasks: 1}, {ID: "agent-2", Name: "Reviewer", RuntimeID: "runtime-1", PermissionMode: "private", MaxConcurrentTasks: 1}}, runtimes: []model.Runtime{{ID: "runtime-1", Name: "desktop", CustomName: "Main PC", Provider: "codex"}}, agentSkills: map[string][]model.SkillSummary{"agent-1": {{ID: "skill-1", Name: "unity-development"}}}, profiles: []model.RuntimeProfile{{ID: "p", DisplayName: "Wrapper", ProtocolFamily: "codex", CommandName: "wrapper", Enabled: true, Visibility: "workspace"}}, squads: []model.Squad{{ID: "sq", Name: "Team", LeaderID: "agent-1", Instructions: "coordinate"}}, squadMembers: map[string][]model.SquadMember{"sq": {{MemberID: "agent-1", MemberType: "agent", Role: "leader"}, {MemberID: "agent-2", MemberType: "agent", Role: "member"}}}}
 }

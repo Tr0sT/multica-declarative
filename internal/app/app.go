@@ -14,7 +14,7 @@ import (
 	"github.com/Tr0sT/multica-declarative/internal/reconcile"
 )
 
-var Version = "0.3.0-dev"
+var Version = "0.4.0-dev"
 
 func Run(args []string, stdout, stderr io.Writer) int {
 	command, flagArgs, err := splitCommand(args)
@@ -22,14 +22,13 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "error: %v\n", err)
 		return 2
 	}
-
 	flags := flag.NewFlagSet("multica-declarative", flag.ContinueOnError)
 	flags.SetOutput(stderr)
-	configPath := flags.String("config", "multica.yaml", "path to the workspace manifest")
-	multicaBinary := flags.String("multica-bin", "multica", "path or name of the Multica CLI binary")
+	configPath := flags.String("config", "multica.yaml", "path to workspace manifest")
+	binary := flags.String("multica-bin", "multica", "Multica CLI binary")
 	outputDir := flags.String("output-dir", "multica-export", "directory written by export")
-	force := flags.Bool("force", false, "replace generated export paths in a non-empty output directory")
-	showVersion := flags.Bool("version", false, "print the version")
+	force := flags.Bool("force", false, "replace generated export paths")
+	version := flags.Bool("version", false, "print version")
 	flags.Usage = func() {
 		fmt.Fprintln(stderr, "Usage: multica-declarative [flags] <export|validate|plan|apply>")
 		flags.PrintDefaults()
@@ -44,7 +43,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "error: unexpected arguments: %s\n", strings.Join(flags.Args(), " "))
 		return 2
 	}
-	if *showVersion {
+	if *version {
 		fmt.Fprintln(stdout, Version)
 		return 0
 	}
@@ -52,48 +51,29 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		flags.Usage()
 		return 2
 	}
-
-	cliBackend := backend.NewCLI(*multicaBinary)
+	cli := backend.NewCLI(*binary)
 	if command == "export" {
-		result, err := (exporter.Exporter{Backend: cliBackend}).Export(exporter.Options{
-			OutputDir: *outputDir,
-			Force:     *force,
-		})
+		result, err := (exporter.Exporter{Backend: cli}).Export(exporter.Options{OutputDir: *outputDir, Force: *force})
 		if err != nil {
 			fmt.Fprintf(stderr, "export failed: %v\n", err)
 			return 1
 		}
-		for _, warning := range result.Warnings {
-			fmt.Fprintf(stderr, "warning: %s\n", warning)
+		for _, w := range result.Warnings {
+			fmt.Fprintf(stderr, "warning: %s\n", w)
 		}
-		fmt.Fprintf(
-			stdout,
-			"Exported %d skill(s), %d agent(s), and %d runtime selector(s) to %s.\n",
-			result.Skills,
-			result.Agents,
-			result.Runtimes,
-			result.OutputDir,
-		)
+		fmt.Fprintf(stdout, "Exported %d skill(s), %d agent(s), %d squad(s), %d runtime profile(s), and %d runtime selector(s) to %s.\n", result.Skills, result.Agents, result.Squads, result.RuntimeProfiles, result.Runtimes, result.OutputDir)
 		return 0
 	}
-
 	project, err := config.Load(*configPath)
 	if err != nil {
 		fmt.Fprintf(stderr, "%s failed: %v\n", command, err)
 		return 1
 	}
 	if command == "validate" {
-		fmt.Fprintf(
-			stdout,
-			"Configuration is valid: %d skill(s), %d agent(s), %d runtime selector(s).\n",
-			len(project.Skills),
-			len(project.Agents),
-			len(project.RuntimeSelectors),
-		)
+		fmt.Fprintf(stdout, "Configuration is valid: %d skill(s), %d agent(s), %d squad(s), %d runtime profile(s), %d runtime selector(s).\n", len(project.Skills), len(project.Agents), len(project.Squads), len(project.RuntimeProfiles), len(project.RuntimeSelectors))
 		return 0
 	}
-
-	controller := reconcile.Reconciler{Backend: cliBackend}
+	controller := reconcile.Reconciler{Backend: cli}
 	switch command {
 	case "plan":
 		changes, err := controller.Plan(project)
@@ -104,10 +84,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		printPlan(stdout, changes)
 		return 0
 	case "apply":
-		err := controller.Apply(project, func(change model.Change) {
-			fmt.Fprintln(stdout, reconcile.FormatChange(change))
-		})
-		if err != nil {
+		if err := controller.Apply(project, func(c model.Change) { fmt.Fprintln(stdout, reconcile.FormatChange(c)) }); err != nil {
 			fmt.Fprintf(stderr, "apply failed: %v\n", err)
 			return 1
 		}
@@ -118,47 +95,39 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 }
-
-func printPlan(writer io.Writer, changes []model.Change) {
+func printPlan(w io.Writer, changes []model.Change) {
 	counts := map[string]int{reconcile.Create: 0, reconcile.Update: 0, reconcile.Noop: 0}
-	for _, change := range changes {
-		fmt.Fprintln(writer, reconcile.FormatChange(change))
-		counts[change.Action]++
+	for _, c := range changes {
+		fmt.Fprintln(w, reconcile.FormatChange(c))
+		counts[c.Action]++
 	}
-	fmt.Fprintf(
-		writer,
-		"\nPlan: %d to create, %d to update, %d unchanged.\n",
-		counts[reconcile.Create],
-		counts[reconcile.Update],
-		counts[reconcile.Noop],
-	)
+	fmt.Fprintf(w, "\nPlan: %d to create, %d to update, %d unchanged.\n", counts[reconcile.Create], counts[reconcile.Update], counts[reconcile.Noop])
 }
-
 func splitCommand(args []string) (string, []string, error) {
 	var command string
-	remaining := make([]string, 0, len(args))
-	expectsValue := false
-	for _, argument := range args {
-		if expectsValue {
-			remaining = append(remaining, argument)
-			expectsValue = false
+	remaining := []string{}
+	expects := false
+	for _, a := range args {
+		if expects {
+			remaining = append(remaining, a)
+			expects = false
 			continue
 		}
-		if argument == "--config" || argument == "--multica-bin" || argument == "--output-dir" {
-			remaining = append(remaining, argument)
-			expectsValue = true
+		if a == "--config" || a == "--multica-bin" || a == "--output-dir" {
+			remaining = append(remaining, a)
+			expects = true
 			continue
 		}
-		if argument == "export" || argument == "validate" || argument == "plan" || argument == "apply" {
+		if a == "export" || a == "validate" || a == "plan" || a == "apply" {
 			if command != "" {
-				return "", nil, fmt.Errorf("multiple commands: %q and %q", command, argument)
+				return "", nil, fmt.Errorf("multiple commands")
 			}
-			command = argument
+			command = a
 			continue
 		}
-		remaining = append(remaining, argument)
+		remaining = append(remaining, a)
 	}
-	if expectsValue {
+	if expects {
 		return "", nil, fmt.Errorf("flag requires a value")
 	}
 	return command, remaining, nil
