@@ -1,6 +1,6 @@
 # multica-declarative
 
-**Manage Multica agents, skills, squads, and runtime profiles as code.**
+**Manage Multica agents, skills, and squads as code.**
 
 `multica-declarative` is a standalone Go CLI that reads version-controlled YAML and
 [Agent Skills](https://agentskills.io/) directories, compares them with a Multica workspace,
@@ -18,8 +18,7 @@ Git repository
   ├── multica.yaml
   ├── agents/
   ├── skills/
-  ├── squads/
-  └── runtime-profiles/
+  └── squads/
           │
           ▼
 multica-declarative export / validate / plan / apply
@@ -39,7 +38,6 @@ Multica
   custom arguments, invocation permissions, skill assignments, custom env files, MCP config files,
   avatars, and archived state;
 - squads with leader, instructions, avatar URL, agent/human members, and roles;
-- custom runtime profiles;
 - read-only export into round-trippable declarations;
 - reviewable `plan` output;
 - convergent `apply` through the official CLI.
@@ -59,7 +57,6 @@ multica skill list --output json
 multica agent list --output json
 multica runtime list --output json
 multica squad list --output json
-multica runtime profile list --output json
 ```
 
 ## Install
@@ -85,8 +82,8 @@ multica-declarative validate
 multica-declarative plan
 ```
 
-The exporter is read-only with respect to Multica. It writes agents, skills, squads, runtime
-profiles, and runtime selectors. Secret values from custom environment variables and MCP config are
+The exporter is read-only with respect to Multica. It writes agents, skills, squads, and runtime
+selectors. Secret values from custom environment variables and MCP config are
 intentionally not exported; add local `customEnvFile` and `mcpConfigFile` references manually.
 
 Refreshing is explicit:
@@ -95,8 +92,8 @@ Refreshing is explicit:
 multica-declarative export --output-dir ./my-workspace --force
 ```
 
-`--force` replaces only generated `multica.yaml`, `agents/`, `skills/`, `squads/`, and
-`runtime-profiles/` paths. Unrelated files and `.git/` are preserved.
+`--force` replaces only generated `multica.yaml`, `agents/`, `skills/`, and `squads/` paths.
+Unrelated files and `.git/` are preserved.
 
 ## Commands
 
@@ -144,9 +141,6 @@ agents:
 squads:
   - squads/unity-team/squad.yaml
 
-runtimeProfiles:
-  - runtime-profiles/codex-wrapper.yaml
-
 runtimes:
   desktop:
     customName: Main PC
@@ -179,7 +173,7 @@ description: Unity implementation and validation conventions.
 Additional skill files must be non-empty UTF-8 text because the current Multica skill file surface is
 text-oriented.
 
-## Agents, squads, and runtime profiles
+## Agents and squads
 
 See [docs/managed-resources.md](docs/managed-resources.md) for complete examples, secret-file rules,
 and a field-by-field compatibility table.
@@ -188,15 +182,14 @@ Important compatibility boundary:
 
 - fields exposed by official CLI create/update commands are fully reconciled;
 - observable server fields without a CLI mutation command are exported and compared, but `apply`
-  rejects a requested change instead of bypassing the CLI;
-- per-machine runtime profile executable overrides are local state and are not exported.
+  rejects a requested change instead of bypassing the CLI.
 
 ## Safety model
 
 - `export` and `plan` never mutate Multica;
 - export validates a complete staging snapshot before replacing generated files;
 - non-empty export targets require `--force`;
-- undeclared agents, skills, squads, and runtime profiles are untouched;
+- undeclared agents, skills, and squads are untouched;
 - top-level pruning is not implemented;
 - secret values are never emitted by export or printed in plans;
 - custom env and MCP values are passed to Multica by file, not embedded in process arguments;

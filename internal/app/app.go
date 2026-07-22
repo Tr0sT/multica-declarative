@@ -61,7 +61,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		for _, w := range result.Warnings {
 			fmt.Fprintf(stderr, "warning: %s\n", w)
 		}
-		fmt.Fprintf(stdout, "Exported %d skill(s), %d agent(s), %d squad(s), %d runtime profile(s), and %d runtime selector(s) to %s.\n", result.Skills, result.Agents, result.Squads, result.RuntimeProfiles, result.Runtimes, result.OutputDir)
+		fmt.Fprintf(stdout, "Exported %d skill(s), %d agent(s), %d squad(s), and %d runtime selector(s) to %s.\n", result.Skills, result.Agents, result.Squads, result.Runtimes, result.OutputDir)
 		return 0
 	}
 	project, err := config.Load(*configPath)
@@ -70,7 +70,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	if command == "validate" {
-		fmt.Fprintf(stdout, "Configuration is valid: %d skill(s), %d agent(s), %d squad(s), %d runtime profile(s), %d runtime selector(s).\n", len(project.Skills), len(project.Agents), len(project.Squads), len(project.RuntimeProfiles), len(project.RuntimeSelectors))
+		fmt.Fprintf(stdout, "Configuration is valid: %d skill(s), %d agent(s), %d squad(s), %d runtime selector(s).\n", len(project.Skills), len(project.Agents), len(project.Squads), len(project.RuntimeSelectors))
 		return 0
 	}
 	controller := reconcile.Reconciler{Backend: cli}

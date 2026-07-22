@@ -216,51 +216,6 @@ func (c *CLI) RemoveSquadMember(id string, m model.SquadMember) error {
 	return c.run("squad", "member", "remove", id, "--member-id", m.MemberID, "--type", m.MemberType, "--output", "json")
 }
 
-func (c *CLI) ListRuntimeProfiles() ([]model.RuntimeProfile, error) {
-	var v []model.RuntimeProfile
-	if err := c.runJSON(&v, "runtime", "profile", "list", "--output", "json"); err != nil {
-		return nil, err
-	}
-	for i := range v {
-		if v[i].FixedArgs == nil {
-			v[i].FixedArgs = []string{}
-		}
-		if v[i].Visibility == "" {
-			v[i].Visibility = "workspace"
-		}
-	}
-	return v, nil
-}
-func (c *CLI) CreateRuntimeProfile(in model.RuntimeProfileInput) (model.RuntimeProfile, error) {
-	args := []string{"runtime", "profile", "create", "--display-name", in.DisplayName, "--protocol-family", in.ProtocolFamily, "--command-name", in.CommandName}
-	if in.Description != "" {
-		args = append(args, "--description", in.Description)
-	}
-	args = append(args, "--output", "json")
-	var v model.RuntimeProfile
-	err := c.runJSON(&v, args...)
-	return v, err
-}
-func (c *CLI) UpdateRuntimeProfile(id string, in model.RuntimeProfileInput, fields []string) (model.RuntimeProfile, error) {
-	args := []string{"runtime", "profile", "update", id}
-	for _, f := range fields {
-		switch f {
-		case "displayName":
-			args = append(args, "--display-name", in.DisplayName)
-		case "commandName":
-			args = append(args, "--command-name", in.CommandName)
-		case "description":
-			args = append(args, "--description", in.Description)
-		case "enabled":
-			args = append(args, "--enabled="+strconv.FormatBool(in.Enabled))
-		}
-	}
-	args = append(args, "--output", "json")
-	var v model.RuntimeProfile
-	err := c.runJSON(&v, args...)
-	return v, err
-}
-
 func (c *CLI) agentArgs(prefix []string, in model.AgentInput, includeClears bool) []string {
 	args := append([]string{}, prefix...)
 	args = append(args, "--name", in.Name, "--runtime-id", in.RuntimeID)

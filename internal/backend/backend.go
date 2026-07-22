@@ -38,9 +38,3 @@ type SquadOperations interface {
 	SetSquadMemberRole(squadID string, member model.SquadMember) error
 	RemoveSquadMember(squadID string, member model.SquadMember) error
 }
-
-type RuntimeProfileOperations interface {
-	ListRuntimeProfiles() ([]model.RuntimeProfile, error)
-	CreateRuntimeProfile(input model.RuntimeProfileInput) (model.RuntimeProfile, error)
-	UpdateRuntimeProfile(profileID string, input model.RuntimeProfileInput, fields []string) (model.RuntimeProfile, error)
-}

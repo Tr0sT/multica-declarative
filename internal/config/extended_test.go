@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func TestLoadExtendedAgentSquadAndRuntimeProfile(t *testing.T) {
+func TestLoadExtendedAgentAndSquad(t *testing.T) {
 	root := t.TempDir()
 	writeExtendedFile(t, filepath.Join(root, "multica.yaml"), `apiVersion: multica-declarative/v1alpha1
 kind: Workspace
@@ -15,7 +15,6 @@ agents:
   - agents/builder/agent.yaml
   - agents/reviewer/agent.yaml
 squads: [squads/unity/squad.yaml]
-runtimeProfiles: [runtime-profiles/wrapper.yaml]
 runtimes:
   desktop:
     name: desktop
@@ -59,13 +58,6 @@ members:
     id: member-1
     role: observer
 `)
-	writeExtendedFile(t, filepath.Join(root, "runtime-profiles/wrapper.yaml"), `kind: RuntimeProfile
-displayName: Codex Wrapper
-protocolFamily: codex
-commandName: codex-wrapper
-enabled: false
-visibility: workspace
-`)
 	project, err := Load(filepath.Join(root, "multica.yaml"))
 	if err != nil {
 		t.Fatal(err)
@@ -77,7 +69,7 @@ visibility: workspace
 	if len(agent.SkillAssignments) != 1 || agent.SkillAssignments[0].Enabled {
 		t.Fatalf("skills=%#v", agent.SkillAssignments)
 	}
-	if len(project.Squads) != 1 || len(project.RuntimeProfiles) != 1 || project.RuntimeProfiles[0].Enabled {
+	if len(project.Squads) != 1 {
 		t.Fatalf("project=%#v", project)
 	}
 }

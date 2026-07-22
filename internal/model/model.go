@@ -94,24 +94,12 @@ type SquadSpec struct {
 	InstructionsFile string
 }
 
-type RuntimeProfileSpec struct {
-	DisplayName    string
-	ProtocolFamily string
-	CommandName    string
-	Description    string
-	Enabled        bool
-	FixedArgs      []string
-	Visibility     string
-	SourcePath     string
-}
-
 type Project struct {
 	WorkspacePath    string
 	RuntimeSelectors map[string]RuntimeSelector
 	Skills           []SkillSpec
 	Agents           []AgentSpec
 	Squads           []SquadSpec
-	RuntimeProfiles  []RuntimeProfileSpec
 }
 
 type SkillFile struct {
@@ -167,7 +155,6 @@ type Runtime struct {
 	CustomName string `json:"custom_name"`
 	Provider   string `json:"provider"`
 	Status     string `json:"status"`
-	ProfileID  string `json:"profile_id"`
 }
 
 type Squad struct {
@@ -183,17 +170,6 @@ type SquadMember struct {
 	MemberID   string `json:"member_id"`
 	MemberType string `json:"member_type"`
 	Role       string `json:"role"`
-}
-
-type RuntimeProfile struct {
-	ID             string   `json:"id"`
-	DisplayName    string   `json:"display_name"`
-	ProtocolFamily string   `json:"protocol_family"`
-	CommandName    string   `json:"command_name"`
-	Description    *string  `json:"description"`
-	FixedArgs      []string `json:"fixed_args"`
-	Visibility     string   `json:"visibility"`
-	Enabled        bool     `json:"enabled"`
 }
 
 type SkillInput struct {
@@ -231,16 +207,6 @@ type SquadInput struct {
 	Instructions string
 	LeaderID     string
 	AvatarURL    string
-}
-
-type RuntimeProfileInput struct {
-	DisplayName    string
-	ProtocolFamily string
-	CommandName    string
-	Description    string
-	Enabled        bool
-	FixedArgs      []string
-	Visibility     string
 }
 
 type Change struct {

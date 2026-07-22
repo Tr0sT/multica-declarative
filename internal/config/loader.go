@@ -17,20 +17,18 @@ import (
 )
 
 const (
-	apiVersion         = "multica-declarative/v1alpha1"
-	workspaceKind      = "Workspace"
-	squadKind          = "Squad"
-	runtimeProfileKind = "RuntimeProfile"
+	apiVersion    = "multica-declarative/v1alpha1"
+	workspaceKind = "Workspace"
+	squadKind     = "Squad"
 )
 
 type workspaceDocument struct {
-	APIVersion      string                     `yaml:"apiVersion"`
-	Kind            string                     `yaml:"kind"`
-	Skills          []string                   `yaml:"skills"`
-	Agents          []string                   `yaml:"agents"`
-	Squads          []string                   `yaml:"squads"`
-	RuntimeProfiles []string                   `yaml:"runtimeProfiles"`
-	Runtimes        map[string]runtimeDocument `yaml:"runtimes"`
+	APIVersion string                     `yaml:"apiVersion"`
+	Kind       string                     `yaml:"kind"`
+	Skills     []string                   `yaml:"skills"`
+	Agents     []string                   `yaml:"agents"`
+	Squads     []string                   `yaml:"squads"`
+	Runtimes   map[string]runtimeDocument `yaml:"runtimes"`
 }
 
 type runtimeDocument struct {
@@ -148,16 +146,6 @@ type squadMemberDocument struct {
 	ID    string `yaml:"id"`
 	Role  string `yaml:"role"`
 }
-type runtimeProfileDocument struct {
-	Kind           string   `yaml:"kind"`
-	DisplayName    string   `yaml:"displayName"`
-	ProtocolFamily string   `yaml:"protocolFamily"`
-	CommandName    string   `yaml:"commandName"`
-	Description    string   `yaml:"description"`
-	Enabled        *bool    `yaml:"enabled"`
-	FixedArgs      []string `yaml:"fixedArgs"`
-	Visibility     string   `yaml:"visibility"`
-}
 type skillFrontmatter struct {
 	Name        string         `yaml:"name"`
 	Description string         `yaml:"description"`
@@ -225,17 +213,6 @@ func Load(workspacePath string) (model.Project, error) {
 			return project, err
 		}
 		project.Squads = append(project.Squads, v)
-	}
-	for _, item := range doc.RuntimeProfiles {
-		p, err := resolvePath(base, item)
-		if err != nil {
-			return project, err
-		}
-		v, err := loadRuntimeProfile(p)
-		if err != nil {
-			return project, err
-		}
-		project.RuntimeProfiles = append(project.RuntimeProfiles, v)
 	}
 	if err := validate(project); err != nil {
 		return model.Project{}, err
@@ -432,32 +409,6 @@ func loadSquad(path string) (model.SquadSpec, error) {
 	return model.SquadSpec{Name: name, Description: strings.TrimSpace(d.Description), Instructions: instructions, Leader: leader, AvatarURL: strings.TrimSpace(d.AvatarURL), Members: members, SourcePath: path, InstructionsFile: d.InstructionsFile}, nil
 }
 
-func loadRuntimeProfile(path string) (model.RuntimeProfileSpec, error) {
-	var d runtimeProfileDocument
-	if err := decodeStrictYAML(path, &d); err != nil {
-		return model.RuntimeProfileSpec{}, err
-	}
-	kind := strings.TrimSpace(d.Kind)
-	if kind == "" {
-		kind = runtimeProfileKind
-	}
-	if kind != runtimeProfileKind {
-		return model.RuntimeProfileSpec{}, fmt.Errorf("%s: unsupported runtime profile kind %q", path, kind)
-	}
-	enabled := true
-	if d.Enabled != nil {
-		enabled = *d.Enabled
-	}
-	v := model.RuntimeProfileSpec{DisplayName: strings.TrimSpace(d.DisplayName), ProtocolFamily: strings.TrimSpace(d.ProtocolFamily), CommandName: strings.TrimSpace(d.CommandName), Description: strings.TrimSpace(d.Description), Enabled: enabled, FixedArgs: append([]string(nil), d.FixedArgs...), Visibility: strings.TrimSpace(d.Visibility), SourcePath: path}
-	if v.Visibility == "" {
-		v.Visibility = "workspace"
-	}
-	if v.DisplayName == "" || v.ProtocolFamily == "" || v.CommandName == "" {
-		return v, fmt.Errorf("%s: displayName, protocolFamily, and commandName are required", path)
-	}
-	return v, nil
-}
-
 func loadSkill(directory string) (model.SkillSpec, error) {
 	contentPath := filepath.Join(directory, "SKILL.md")
 	data, err := os.ReadFile(contentPath)
@@ -509,7 +460,7 @@ func loadSkill(directory string) (model.SkillSpec, error) {
 }
 
 func validate(p model.Project) error {
-	if len(p.Skills)+len(p.Agents)+len(p.Squads)+len(p.RuntimeProfiles) == 0 {
+	if len(p.Skills)+len(p.Agents)+len(p.Squads) == 0 {
 		return fmt.Errorf("workspace must declare at least one resource")
 	}
 	skills := map[string]struct{}{}
@@ -550,13 +501,6 @@ func validate(p model.Project) error {
 				}
 			}
 		}
-	}
-	profiles := map[string]struct{}{}
-	for _, v := range p.RuntimeProfiles {
-		if _, ok := profiles[v.DisplayName]; ok {
-			return fmt.Errorf("duplicate runtime profile displayName %q", v.DisplayName)
-		}
-		profiles[v.DisplayName] = struct{}{}
 	}
 	return nil
 }

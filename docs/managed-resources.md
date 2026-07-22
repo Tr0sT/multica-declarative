@@ -19,9 +19,6 @@ agents:
 squads:
   - squads/unity-team/squad.yaml
 
-runtimeProfiles:
-  - runtime-profiles/codex-wrapper.yaml
-
 runtimes:
   desktop:
     customName: Main PC
@@ -136,26 +133,3 @@ members:
 The leader and agent members reference agents by declaration name. Human members use their Multica
 member UUID. `plan` and `apply` manage description, instructions, leader, avatar URL, member set,
 and member roles. A leader is always reconciled as an agent member with role `leader`.
-
-## Runtime profiles
-
-```yaml
-kind: RuntimeProfile
-displayName: Codex Wrapper
-protocolFamily: codex
-commandName: multica-codex-wrapper
-description: Starts Codex with site-specific configuration.
-enabled: true
-visibility: workspace
-fixedArgs: []
-```
-
-The official CLI supports create/update for `displayName`, `protocolFamily`, `commandName`,
-`description`, and `enabled`, with two constraints:
-
-- `protocolFamily` is immutable after creation;
-- `fixedArgs` and non-workspace visibility are observable but not mutable through the CLI.
-
-Consequently, export preserves all profile fields and plan reports every difference. Apply rejects an
-unsupported mutation rather than bypassing the CLI. Per-machine `runtime profile set-path` overrides
-are intentionally not exported because they are local machine state, not workspace declarations.

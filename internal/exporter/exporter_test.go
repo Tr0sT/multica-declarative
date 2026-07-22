@@ -16,7 +16,6 @@ type fakeBackend struct {
 	agents       []model.Agent
 	runtimes     []model.Runtime
 	agentSkills  map[string][]model.SkillSummary
-	profiles     []model.RuntimeProfile
 	squads       []model.Squad
 	squadMembers map[string][]model.SquadMember
 }
@@ -66,15 +65,6 @@ func (*fakeBackend) SetAgentSkills(string, []string) error                     {
 func (f *fakeBackend) ListRuntimes() ([]model.Runtime, error) {
 	return append([]model.Runtime(nil), f.runtimes...), nil
 }
-func (f *fakeBackend) ListRuntimeProfiles() ([]model.RuntimeProfile, error) {
-	return append([]model.RuntimeProfile(nil), f.profiles...), nil
-}
-func (*fakeBackend) CreateRuntimeProfile(model.RuntimeProfileInput) (model.RuntimeProfile, error) {
-	panic("mutation")
-}
-func (*fakeBackend) UpdateRuntimeProfile(string, model.RuntimeProfileInput, []string) (model.RuntimeProfile, error) {
-	panic("mutation")
-}
 func (f *fakeBackend) ListSquads() ([]model.Squad, error) {
 	return append([]model.Squad(nil), f.squads...), nil
 }
@@ -104,8 +94,11 @@ func TestExportCreatesRoundTrippableSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Skills != 1 || result.Agents != 2 || result.Squads != 1 || result.RuntimeProfiles != 1 {
+	if result.Skills != 1 || result.Agents != 2 || result.Squads != 1 {
 		t.Fatalf("%#v", result)
+	}
+	if _, err := os.Stat(filepath.Join(out, "runtime-profiles")); !os.IsNotExist(err) {
+		t.Fatalf("removed runtime-profiles directory was created: %v", err)
 	}
 	agentYAML, err := os.ReadFile(filepath.Join(out, "agents", "unity-developer", "agent.yaml"))
 	if err != nil {
@@ -176,5 +169,5 @@ func TestExportRejectsUnsafeSkillPath(t *testing.T) {
 }
 func exampleBackend() *fakeBackend {
 	workspace := model.InvocationTarget{TargetType: "workspace"}
-	return &fakeBackend{skills: []model.Skill{{ID: "skill-1", Name: "unity-development", Description: "Unity conventions", Content: "---\nname: unity-development\ndescription: Unity conventions\n---\n", Files: []model.SkillFile{{ID: "f", Path: "references/test.md", Content: "test"}}}}, agents: []model.Agent{{ID: "agent-1", Name: "Unity Developer", Instructions: "work", RuntimeID: "runtime-1", PermissionMode: "public_to", InvocationTargets: []model.InvocationTarget{workspace}, MaxConcurrentTasks: 1}, {ID: "agent-2", Name: "Reviewer", RuntimeID: "runtime-1", PermissionMode: "private", MaxConcurrentTasks: 1}}, runtimes: []model.Runtime{{ID: "runtime-1", Name: "desktop", CustomName: "Main PC", Provider: "codex"}}, agentSkills: map[string][]model.SkillSummary{"agent-1": {{ID: "skill-1", Name: "unity-development"}}}, profiles: []model.RuntimeProfile{{ID: "p", DisplayName: "Wrapper", ProtocolFamily: "codex", CommandName: "wrapper", Enabled: true, Visibility: "workspace"}}, squads: []model.Squad{{ID: "sq", Name: "Team", LeaderID: "agent-1", Instructions: "coordinate"}}, squadMembers: map[string][]model.SquadMember{"sq": {{MemberID: "agent-1", MemberType: "agent", Role: "leader"}, {MemberID: "agent-2", MemberType: "agent", Role: "member"}}}}
+	return &fakeBackend{skills: []model.Skill{{ID: "skill-1", Name: "unity-development", Description: "Unity conventions", Content: "---\nname: unity-development\ndescription: Unity conventions\n---\n", Files: []model.SkillFile{{ID: "f", Path: "references/test.md", Content: "test"}}}}, agents: []model.Agent{{ID: "agent-1", Name: "Unity Developer", Instructions: "work", RuntimeID: "runtime-1", PermissionMode: "public_to", InvocationTargets: []model.InvocationTarget{workspace}, MaxConcurrentTasks: 1}, {ID: "agent-2", Name: "Reviewer", RuntimeID: "runtime-1", PermissionMode: "private", MaxConcurrentTasks: 1}}, runtimes: []model.Runtime{{ID: "runtime-1", Name: "desktop", CustomName: "Main PC", Provider: "codex"}}, agentSkills: map[string][]model.SkillSummary{"agent-1": {{ID: "skill-1", Name: "unity-development"}}}, squads: []model.Squad{{ID: "sq", Name: "Team", LeaderID: "agent-1", Instructions: "coordinate"}}, squadMembers: map[string][]model.SquadMember{"sq": {{MemberID: "agent-1", MemberType: "agent", Role: "leader"}, {MemberID: "agent-2", MemberType: "agent", Role: "member"}}}}
 }

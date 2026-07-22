@@ -74,19 +74,13 @@ func TestListAgentsIncludesArchived(t *testing.T) {
 		t.Fatal(runner.calls[0].args)
 	}
 }
-func TestRuntimeProfileAndSquadCommands(t *testing.T) {
+func TestSquadCommands(t *testing.T) {
 	runner := &fakeRunner{stdout: []byte(`{"id":"x"}`)}
 	c := &CLI{Runner: runner}
-	if _, err := c.CreateRuntimeProfile(model.RuntimeProfileInput{DisplayName: "Wrapper", ProtocolFamily: "codex", CommandName: "wrapper", Enabled: true}); err != nil {
-		t.Fatal(err)
-	}
 	if _, err := c.CreateSquad(model.SquadInput{Name: "Team", LeaderID: "agent-1"}); err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.Join(runner.calls[0].args, " "); !strings.Contains(got, "runtime profile create") {
-		t.Fatal(got)
-	}
-	if got := strings.Join(runner.calls[1].args, " "); !strings.Contains(got, "squad create") || !strings.Contains(got, "--leader agent-1") {
+	if got := strings.Join(runner.calls[0].args, " "); !strings.Contains(got, "squad create") || !strings.Contains(got, "--leader agent-1") {
 		t.Fatal(got)
 	}
 }

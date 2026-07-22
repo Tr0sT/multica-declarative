@@ -16,7 +16,6 @@ type fakeBackend struct {
 	agent                       model.Agent
 	runtimes                    []model.Runtime
 	agentSkills                 []model.SkillSummary
-	profiles                    []model.RuntimeProfile
 	squads                      []model.Squad
 	squad                       model.Squad
 	members                     []model.SquadMember
@@ -62,21 +61,14 @@ func (f *fakeBackend) SetAgentSkills(_ string, ids []string) error {
 	f.assignedIDs = append([]string(nil), ids...)
 	return nil
 }
-func (f *fakeBackend) ListRuntimes() ([]model.Runtime, error)               { return f.runtimes, nil }
-func (f *fakeBackend) GetAgentEnv(string) (map[string]string, error)        { return f.env, nil }
-func (f *fakeBackend) SetAgentEnv(string, string) error                     { return nil }
-func (f *fakeBackend) UploadAgentAvatar(string, string) error               { return nil }
-func (f *fakeBackend) ArchiveAgent(string) error                            { f.archived = true; return nil }
-func (f *fakeBackend) RestoreAgent(string) error                            { f.restored = true; return nil }
-func (f *fakeBackend) ListRuntimeProfiles() ([]model.RuntimeProfile, error) { return f.profiles, nil }
-func (f *fakeBackend) CreateRuntimeProfile(in model.RuntimeProfileInput) (model.RuntimeProfile, error) {
-	return model.RuntimeProfile{ID: "p", DisplayName: in.DisplayName, ProtocolFamily: in.ProtocolFamily, CommandName: in.CommandName, Enabled: true}, nil
-}
-func (f *fakeBackend) UpdateRuntimeProfile(_ string, _ model.RuntimeProfileInput, _ []string) (model.RuntimeProfile, error) {
-	return model.RuntimeProfile{ID: "p"}, nil
-}
-func (f *fakeBackend) ListSquads() ([]model.Squad, error)   { return f.squads, nil }
-func (f *fakeBackend) GetSquad(string) (model.Squad, error) { return f.squad, nil }
+func (f *fakeBackend) ListRuntimes() ([]model.Runtime, error)        { return f.runtimes, nil }
+func (f *fakeBackend) GetAgentEnv(string) (map[string]string, error) { return f.env, nil }
+func (f *fakeBackend) SetAgentEnv(string, string) error              { return nil }
+func (f *fakeBackend) UploadAgentAvatar(string, string) error        { return nil }
+func (f *fakeBackend) ArchiveAgent(string) error                     { f.archived = true; return nil }
+func (f *fakeBackend) RestoreAgent(string) error                     { f.restored = true; return nil }
+func (f *fakeBackend) ListSquads() ([]model.Squad, error)            { return f.squads, nil }
+func (f *fakeBackend) GetSquad(string) (model.Squad, error)          { return f.squad, nil }
 func (f *fakeBackend) CreateSquad(in model.SquadInput) (model.Squad, error) {
 	f.members = []model.SquadMember{{MemberID: in.LeaderID, MemberType: "agent", Role: "leader"}}
 	return model.Squad{ID: "sq", Name: in.Name, LeaderID: in.LeaderID}, nil
@@ -169,10 +161,9 @@ func TestObservedOnlyAgentFieldRejectsApply(t *testing.T) {
 		t.Fatal("expected error")
 	}
 }
-func TestSquadAndRuntimeProfileApply(t *testing.T) {
+func TestSquadApply(t *testing.T) {
 	b := existingBackend()
 	p := exampleProject(t)
-	p.RuntimeProfiles = []model.RuntimeProfileSpec{{DisplayName: "Wrapper", ProtocolFamily: "codex", CommandName: "wrapper", Enabled: false, Visibility: "workspace"}}
 	p.Squads = []model.SquadSpec{{Name: "Team", Leader: "Unity Developer", Members: []model.SquadMemberSpec{{Type: "member", ID: "human-1", Role: "member"}}}}
 	if err := (Reconciler{Backend: b}).Apply(p, func(model.Change) {}); err != nil {
 		t.Fatal(err)
@@ -192,15 +183,6 @@ func TestArchivedAgentIsRestoredForUpdateAndRearchivedWhenUnmanaged(t *testing.T
 	}
 	if !b.restored || !b.archived {
 		t.Fatalf("restored=%v archived=%v", b.restored, b.archived)
-	}
-}
-
-func TestRuntimeProfileUnsupportedFieldsRejectApply(t *testing.T) {
-	b := existingBackend()
-	p := exampleProject(t)
-	p.RuntimeProfiles = []model.RuntimeProfileSpec{{DisplayName: "Wrapper", ProtocolFamily: "codex", CommandName: "wrapper", Enabled: true, FixedArgs: []string{"--x"}, Visibility: "workspace"}}
-	if err := (Reconciler{Backend: b}).Apply(p, func(model.Change) {}); err == nil {
-		t.Fatal("expected error")
 	}
 }
 

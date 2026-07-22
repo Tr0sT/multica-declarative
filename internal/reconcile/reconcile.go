@@ -28,28 +28,6 @@ type Reconciler struct {
 
 func (r Reconciler) Plan(project model.Project) ([]model.Change, error) {
 	changes := []model.Change{}
-	if len(project.RuntimeProfiles) > 0 {
-		ops, ok := r.Backend.(backend.RuntimeProfileOperations)
-		if !ok {
-			return nil, fmt.Errorf("backend does not support runtime profiles")
-		}
-		actual, err := ops.ListRuntimeProfiles()
-		if err != nil {
-			return nil, err
-		}
-		for _, d := range project.RuntimeProfiles {
-			matches := profilesNamed(actual, d.DisplayName)
-			switch len(matches) {
-			case 0:
-				changes = append(changes, model.Change{Action: Create, Kind: "runtime-profile", Name: d.DisplayName})
-			case 1:
-				fields := diffRuntimeProfile(d, matches[0])
-				changes = append(changes, makeChange("runtime-profile", d.DisplayName, fields))
-			default:
-				return nil, fmt.Errorf("multiple runtime profiles named %q", d.DisplayName)
-			}
-		}
-	}
 	remoteSkills, err := r.Backend.ListSkills()
 	if err != nil {
 		return nil, err
@@ -142,50 +120,6 @@ func (r Reconciler) Plan(project model.Project) ([]model.Change, error) {
 func (r Reconciler) Apply(project model.Project, report func(model.Change)) error {
 	if report == nil {
 		report = func(model.Change) {}
-	}
-	if len(project.RuntimeProfiles) > 0 {
-		ops, ok := r.Backend.(backend.RuntimeProfileOperations)
-		if !ok {
-			return fmt.Errorf("backend does not support runtime profiles")
-		}
-		actual, err := ops.ListRuntimeProfiles()
-		if err != nil {
-			return err
-		}
-		for _, d := range project.RuntimeProfiles {
-			m := profilesNamed(actual, d.DisplayName)
-			switch len(m) {
-			case 0:
-				if err := validateCreatableProfile(d); err != nil {
-					return err
-				}
-				created, err := ops.CreateRuntimeProfile(profileInput(d))
-				if err != nil {
-					return err
-				}
-				if !d.Enabled {
-					_, err = ops.UpdateRuntimeProfile(created.ID, profileInput(d), []string{"enabled"})
-					if err != nil {
-						return err
-					}
-				}
-				report(model.Change{Action: Create, Kind: "runtime-profile", Name: d.DisplayName})
-			case 1:
-				fields := diffRuntimeProfile(d, m[0])
-				if err := validateProfileUpdate(fields, d, m[0]); err != nil {
-					return err
-				}
-				mutable := mutableProfileFields(fields)
-				if len(mutable) > 0 {
-					if _, err := ops.UpdateRuntimeProfile(m[0].ID, profileInput(d), mutable); err != nil {
-						return err
-					}
-				}
-				report(makeChange("runtime-profile", d.DisplayName, fields))
-			default:
-				return fmt.Errorf("multiple runtime profiles named %q", d.DisplayName)
-			}
-		}
 	}
 	remoteSkills, err := r.Backend.ListSkills()
 	if err != nil {
@@ -677,59 +611,6 @@ func validateObservedOnlyChanges(d model.AgentSpec, a model.Agent, skills []mode
 	}
 	return nil
 }
-func validateCreatableProfile(d model.RuntimeProfileSpec) error {
-	if len(d.FixedArgs) > 0 || d.Visibility != "workspace" {
-		return fmt.Errorf("runtime profile %q fixedArgs and non-workspace visibility cannot be created through the official CLI", d.DisplayName)
-	}
-	return nil
-}
-func validateProfileUpdate(fields []string, d model.RuntimeProfileSpec, a model.RuntimeProfile) error {
-	for _, f := range fields {
-		if f == "protocolFamily" {
-			return fmt.Errorf("runtime profile %q protocolFamily is immutable", d.DisplayName)
-		}
-		if f == "fixedArgs" || f == "visibility" {
-			return fmt.Errorf("runtime profile %q %s cannot be changed through the official CLI", d.DisplayName, f)
-		}
-	}
-	return nil
-}
-
-func diffRuntimeProfile(d model.RuntimeProfileSpec, a model.RuntimeProfile) []string {
-	fields := []string{}
-	if d.ProtocolFamily != a.ProtocolFamily {
-		fields = append(fields, "protocolFamily")
-	}
-	if d.CommandName != a.CommandName {
-		fields = append(fields, "commandName")
-	}
-	actualDesc := ""
-	if a.Description != nil {
-		actualDesc = *a.Description
-	}
-	if d.Description != actualDesc {
-		fields = append(fields, "description")
-	}
-	if d.Enabled != a.Enabled {
-		fields = append(fields, "enabled")
-	}
-	if !equalStrings(d.FixedArgs, a.FixedArgs) {
-		fields = append(fields, "fixedArgs")
-	}
-	if d.Visibility != a.Visibility {
-		fields = append(fields, "visibility")
-	}
-	return fields
-}
-func mutableProfileFields(fields []string) []string {
-	out := []string{}
-	for _, f := range fields {
-		if f == "commandName" || f == "description" || f == "enabled" || f == "displayName" {
-			out = append(out, f)
-		}
-	}
-	return out
-}
 func diffSkill(d model.SkillSpec, a model.Skill) []string {
 	fields := []string{}
 	if d.Description != a.Description {
@@ -933,9 +814,6 @@ func agentInput(v model.AgentSpec, runtimeID string) model.AgentInput {
 func squadInput(v model.SquadSpec, leaderID string) model.SquadInput {
 	return model.SquadInput{Name: v.Name, Description: v.Description, Instructions: v.Instructions, LeaderID: leaderID, AvatarURL: v.AvatarURL}
 }
-func profileInput(v model.RuntimeProfileSpec) model.RuntimeProfileInput {
-	return model.RuntimeProfileInput{DisplayName: v.DisplayName, ProtocolFamily: v.ProtocolFamily, CommandName: v.CommandName, Description: v.Description, Enabled: v.Enabled, FixedArgs: v.FixedArgs, Visibility: v.Visibility}
-}
 func skillsNamed(items []model.Skill, name string) []model.Skill {
 	out := []model.Skill{}
 	for _, v := range items {
@@ -958,15 +836,6 @@ func squadsNamed(items []model.Squad, name string) []model.Squad {
 	out := []model.Squad{}
 	for _, v := range items {
 		if v.Name == name {
-			out = append(out, v)
-		}
-	}
-	return out
-}
-func profilesNamed(items []model.RuntimeProfile, name string) []model.RuntimeProfile {
-	out := []model.RuntimeProfile{}
-	for _, v := range items {
-		if v.DisplayName == name {
 			out = append(out, v)
 		}
 	}

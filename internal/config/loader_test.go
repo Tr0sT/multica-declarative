@@ -98,6 +98,26 @@ description: Example
 	}
 }
 
+func TestRejectsRemovedRuntimeProfilesField(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "multica.yaml"), `apiVersion: multica-declarative/v1alpha1
+kind: Workspace
+runtimeProfiles: []
+skills: [skills/example]
+`)
+	writeFile(t, filepath.Join(root, "skills/example/SKILL.md"), `---
+name: example
+description: Example
+---
+`)
+
+	_, err := Load(filepath.Join(root, "multica.yaml"))
+	if err == nil || !strings.Contains(err.Error(), "field runtimeProfiles not found") {
+		t.Fatalf("expected removed runtimeProfiles field error, got %v", err)
+	}
+}
+
 func TestRejectsAgentKindField(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()

@@ -9,7 +9,7 @@ import (
 )
 
 func writeSnapshot(root string, v snapshot) error {
-	for _, dir := range []string{"agents", "skills", "squads", "runtime-profiles"} {
+	for _, dir := range []string{"agents", "skills", "squads"} {
 		if err := os.MkdirAll(filepath.Join(root, dir), 0755); err != nil {
 			return err
 		}
@@ -63,11 +63,6 @@ func writeSnapshot(root string, v snapshot) error {
 			}
 		}
 		if err := writeYAML(filepath.Join(dir, "squad.yaml"), s.document); err != nil {
-			return err
-		}
-	}
-	for _, p := range v.profiles {
-		if err := writeYAML(filepath.Join(root, "runtime-profiles", p.directory+".yaml"), p.document); err != nil {
 			return err
 		}
 	}

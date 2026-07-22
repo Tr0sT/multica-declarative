@@ -20,16 +20,16 @@ const (
 	apiVersion       = "multica-declarative/v1alpha1"
 )
 
-var generatedPaths = []string{"multica.yaml", "agents", "skills", "squads", "runtime-profiles"}
+var generatedPaths = []string{"multica.yaml", "agents", "skills", "squads"}
 
 type Options struct {
 	OutputDir string
 	Force     bool
 }
 type Result struct {
-	OutputDir                                         string
-	Skills, Agents, Runtimes, Squads, RuntimeProfiles int
-	Warnings                                          []string
+	OutputDir                        string
+	Skills, Agents, Runtimes, Squads int
+	Warnings                         []string
 }
 type Exporter struct {
 	Backend    backend.Backend
@@ -40,7 +40,6 @@ type snapshot struct {
 	skills   []exportedSkill
 	agents   []exportedAgent
 	squads   []exportedSquad
-	profiles []exportedProfile
 	warnings []string
 }
 type exportedSkill struct {
@@ -57,19 +56,13 @@ type exportedSquad struct {
 	directory, instructions string
 	document                squadDocument
 }
-type exportedProfile struct {
-	directory string
-	document  runtimeProfileDocument
-}
-
 type workspaceDocument struct {
-	APIVersion      string                     `yaml:"apiVersion"`
-	Kind            string                     `yaml:"kind"`
-	Skills          []string                   `yaml:"skills,omitempty"`
-	Agents          []string                   `yaml:"agents,omitempty"`
-	Squads          []string                   `yaml:"squads,omitempty"`
-	RuntimeProfiles []string                   `yaml:"runtimeProfiles,omitempty"`
-	Runtimes        map[string]runtimeDocument `yaml:"runtimes,omitempty"`
+	APIVersion string                     `yaml:"apiVersion"`
+	Kind       string                     `yaml:"kind"`
+	Skills     []string                   `yaml:"skills,omitempty"`
+	Agents     []string                   `yaml:"agents,omitempty"`
+	Squads     []string                   `yaml:"squads,omitempty"`
+	Runtimes   map[string]runtimeDocument `yaml:"runtimes,omitempty"`
 }
 type runtimeDocument struct {
 	ID         string `yaml:"id,omitempty"`
@@ -124,16 +117,6 @@ type squadMemberDocument struct {
 	ID    string `yaml:"id,omitempty"`
 	Role  string `yaml:"role"`
 }
-type runtimeProfileDocument struct {
-	Kind           string   `yaml:"kind"`
-	DisplayName    string   `yaml:"displayName"`
-	ProtocolFamily string   `yaml:"protocolFamily"`
-	CommandName    string   `yaml:"commandName"`
-	Description    string   `yaml:"description,omitempty"`
-	Enabled        bool     `yaml:"enabled"`
-	FixedArgs      []string `yaml:"fixedArgs,omitempty"`
-	Visibility     string   `yaml:"visibility"`
-}
 
 func (e Exporter) Export(options Options) (Result, error) {
 	if e.Backend == nil {
@@ -155,7 +138,7 @@ func (e Exporter) Export(options Options) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	if len(snap.skills)+len(snap.agents)+len(snap.squads)+len(snap.profiles) == 0 {
+	if len(snap.skills)+len(snap.agents)+len(snap.squads) == 0 {
 		return Result{}, fmt.Errorf("Multica workspace contains no exportable resources")
 	}
 	parent := filepath.Dir(absolute)
@@ -173,7 +156,7 @@ func (e Exporter) Export(options Options) (Result, error) {
 	if err := installSnapshot(staging, absolute, options.Force); err != nil {
 		return Result{}, err
 	}
-	return Result{OutputDir: absolute, Skills: len(snap.skills), Agents: len(snap.agents), Runtimes: len(snap.manifest.Runtimes), Squads: len(snap.squads), RuntimeProfiles: len(snap.profiles), Warnings: snap.warnings}, nil
+	return Result{OutputDir: absolute, Skills: len(snap.skills), Agents: len(snap.agents), Runtimes: len(snap.manifest.Runtimes), Squads: len(snap.squads), Warnings: snap.warnings}, nil
 }
 
 func (e Exporter) readSnapshot() (snapshot, error) {
@@ -294,23 +277,6 @@ func (e Exporter) readSnapshot() (snapshot, error) {
 		}
 		agents = append(agents, ea)
 	}
-	profiles := []exportedProfile{}
-	if ops, ok := e.Backend.(backend.RuntimeProfileOperations); ok {
-		items, err := ops.ListRuntimeProfiles()
-		if err != nil {
-			return snapshot{}, err
-		}
-		sort.Slice(items, func(i, j int) bool { return items[i].DisplayName < items[j].DisplayName })
-		used := map[string]struct{}{}
-		for _, v := range items {
-			desc := ""
-			if v.Description != nil {
-				desc = *v.Description
-			}
-			dir := uniqueSlug(v.DisplayName, v.ID, used)
-			profiles = append(profiles, exportedProfile{directory: dir, document: runtimeProfileDocument{Kind: "RuntimeProfile", DisplayName: v.DisplayName, ProtocolFamily: v.ProtocolFamily, CommandName: v.CommandName, Description: desc, Enabled: v.Enabled, FixedArgs: append([]string(nil), v.FixedArgs...), Visibility: defaultString(v.Visibility, "workspace")}})
-		}
-	}
 	squads := []exportedSquad{}
 	if ops, ok := e.Backend.(backend.SquadOperations); ok {
 		items, err := ops.ListSquads()
@@ -373,10 +339,7 @@ func (e Exporter) readSnapshot() (snapshot, error) {
 	for _, v := range squads {
 		manifest.Squads = append(manifest.Squads, path.Join("squads", v.directory, "squad.yaml"))
 	}
-	for _, v := range profiles {
-		manifest.RuntimeProfiles = append(manifest.RuntimeProfiles, path.Join("runtime-profiles", v.directory+".yaml"))
-	}
-	return snapshot{manifest: manifest, skills: skills, agents: agents, squads: squads, profiles: profiles, warnings: warnings}, nil
+	return snapshot{manifest: manifest, skills: skills, agents: agents, squads: squads, warnings: warnings}, nil
 }
 
 func (e Exporter) downloadAvatar(url string) ([]byte, string, error) {
