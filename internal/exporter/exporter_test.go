@@ -110,24 +110,9 @@ func TestExportCreatesRoundTrippableSnapshot(t *testing.T) {
 	if result.Skills != 1 || result.Agents != 2 || result.Squads != 1 {
 		t.Fatalf("%#v", result)
 	}
-	if _, err := os.Stat(filepath.Join(out, "runtime-profiles")); !os.IsNotExist(err) {
-		t.Fatalf("removed runtime-profiles directory was created: %v", err)
-	}
-	manifestYAML, err := os.ReadFile(filepath.Join(out, "multica.yaml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, removed := range []string{"kind:", "skills:", "agents:", "squads:"} {
-		if strings.Contains(string(manifestYAML), removed) {
-			t.Fatalf("workspace manifest contains removed %s field:\n%s", removed, manifestYAML)
-		}
-	}
 	agentYAML, err := os.ReadFile(filepath.Join(out, "agents", "unity-developer", "agent.yaml"))
 	if err != nil {
 		t.Fatal(err)
-	}
-	if strings.Contains(string(agentYAML), "kind:") {
-		t.Fatalf("agent declaration contains redundant kind field:\n%s", agentYAML)
 	}
 	for _, reference := range []string{"customEnvFile: custom-env.json", "mcpConfigFile: mcp.json"} {
 		if !strings.Contains(string(agentYAML), reference) {
@@ -211,14 +196,21 @@ func TestExportForcePreservesUnrelated(t *testing.T) {
 		t.Fatal("stale path remains")
 	}
 }
-func TestExportForcePreservesNestedAgentDirectory(t *testing.T) {
+func TestExportForcePreservesNestedResourceDirectories(t *testing.T) {
 	out := filepath.Join(t.TempDir(), "export")
-	nested := filepath.Join(out, "agents", "main", "custom-unity")
-	if err := os.MkdirAll(nested, 0755); err != nil {
-		t.Fatal(err)
+	existing := map[string]string{
+		filepath.Join("agents", "main", "custom-unity", "agent.yaml"): "name: Unity Developer\n",
+		filepath.Join("skills", "shared", "unity", "SKILL.md"):        "---\nname: unity-development\ndescription: Unity\n---\n",
+		filepath.Join("squads", "main", "custom-team", "squad.yaml"):  "name: Team\n",
 	}
-	if err := os.WriteFile(filepath.Join(nested, "agent.yaml"), []byte("name: Unity Developer\n"), 0644); err != nil {
-		t.Fatal(err)
+	for relative, content := range existing {
+		path := filepath.Join(out, relative)
+		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	if _, err := (Exporter{Backend: exampleBackend()}).Export(Options{OutputDir: out, Force: true}); err != nil {
@@ -227,15 +219,93 @@ func TestExportForcePreservesNestedAgentDirectory(t *testing.T) {
 	for _, expected := range []string{
 		filepath.Join(out, "agents", "main", "custom-unity", "agent.yaml"),
 		filepath.Join(out, "agents", "reviewer", "agent.yaml"),
+		filepath.Join(out, "skills", "shared", "unity", "SKILL.md"),
+		filepath.Join(out, "squads", "main", "custom-team", "squad.yaml"),
 	} {
 		if _, err := os.Stat(expected); err != nil {
 			t.Fatalf("expected exported agent at %s: %v", expected, err)
 		}
 	}
-	if _, err := os.Stat(filepath.Join(out, "agents", "unity-developer")); !os.IsNotExist(err) {
-		t.Fatalf("matched agent was also exported at the default path: %v", err)
+	for _, unexpected := range []string{
+		filepath.Join(out, "agents", "unity-developer"),
+		filepath.Join(out, "skills", "unity-development"),
+		filepath.Join(out, "squads", "team"),
+	} {
+		if _, err := os.Stat(unexpected); !os.IsNotExist(err) {
+			t.Fatalf("matched resource was also exported at the default path %s: %v", unexpected, err)
+		}
 	}
 }
+
+func TestExportValidatesBeforeReplacingTarget(t *testing.T) {
+	out := filepath.Join(t.TempDir(), "export")
+	if err := os.MkdirAll(out, 0755); err != nil {
+		t.Fatal(err)
+	}
+	manifest := filepath.Join(out, "multica.yaml")
+	if err := os.WriteFile(manifest, []byte("existing snapshot\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	b := exampleBackend()
+	b.agents[0].DisabledRuntimeSkills = []model.DisabledRuntimeSkill{{Key: "missing-root"}}
+
+	_, err := (Exporter{Backend: b}).Export(Options{OutputDir: out, Force: true})
+	if err == nil || !strings.Contains(err.Error(), "validate generated snapshot") {
+		t.Fatalf("expected staging validation error, got %v", err)
+	}
+	data, readErr := os.ReadFile(manifest)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(data) != "existing snapshot\n" {
+		t.Fatalf("existing target was modified: %q", data)
+	}
+}
+
+func TestInstallSnapshotRollsBackOnIncompleteStaging(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "target")
+	staging := filepath.Join(root, "staging")
+	if err := os.MkdirAll(staging, 0755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range generatedPaths {
+		path := filepath.Join(target, name)
+		if filepath.Ext(name) == ".yaml" {
+			if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, []byte("old\n"), 0644); err != nil {
+				t.Fatal(err)
+			}
+			continue
+		}
+		if err := os.MkdirAll(path, 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(path, "sentinel"), []byte(name), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(staging, "multica.yaml"), []byte("new\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := installSnapshot(staging, target, true); err == nil {
+		t.Fatal("expected incomplete staging error")
+	}
+	manifest, err := os.ReadFile(filepath.Join(target, "multica.yaml"))
+	if err != nil || string(manifest) != "old\n" {
+		t.Fatalf("manifest was not restored: %q, %v", manifest, err)
+	}
+	for _, name := range []string{"agents", "skills", "squads"} {
+		data, err := os.ReadFile(filepath.Join(target, name, "sentinel"))
+		if err != nil || string(data) != name {
+			t.Fatalf("%s was not restored: %q, %v", name, data, err)
+		}
+	}
+}
+
 func TestExportRejectsUnsafeSkillPath(t *testing.T) {
 	b := exampleBackend()
 	b.skills[0].Files = []model.SkillFile{{ID: "f", Path: "../escape", Content: "x"}}
@@ -254,5 +324,5 @@ func TestExportRejectsRedactedMCPConfig(t *testing.T) {
 }
 func exampleBackend() *fakeBackend {
 	workspace := model.InvocationTarget{TargetType: "workspace"}
-	return &fakeBackend{skills: []model.Skill{{ID: "skill-1", Name: "unity-development", Description: "Unity conventions", Content: "---\nname: unity-development\ndescription: Unity conventions\n---\n", Files: []model.SkillFile{{ID: "f", Path: "references/test.md", Content: "test"}}}}, agents: []model.Agent{{ID: "agent-1", Name: "Unity Developer", Instructions: "work", RuntimeID: "runtime-1", PermissionMode: "public_to", InvocationTargets: []model.InvocationTarget{workspace}, MaxConcurrentTasks: 1, MCPConfig: json.RawMessage(`{"token":"mcp-secret"}`), HasCustomEnv: true, CustomEnvKeyCount: 1}, {ID: "agent-2", Name: "Reviewer", RuntimeID: "runtime-1", PermissionMode: "private", MaxConcurrentTasks: 1}}, runtimes: []model.Runtime{{ID: "runtime-1", Name: "desktop", CustomName: "Main PC", Provider: "codex"}}, agentSkills: map[string][]model.SkillSummary{"agent-1": {{ID: "skill-1", Name: "unity-development"}}}, agentEnvs: map[string]map[string]string{"agent-1": {"TOKEN": "env-secret"}}, squads: []model.Squad{{ID: "sq", Name: "Team", LeaderID: "agent-1", Instructions: "coordinate"}}, squadMembers: map[string][]model.SquadMember{"sq": {{MemberID: "agent-1", MemberType: "agent", Role: "leader"}, {MemberID: "agent-2", MemberType: "agent", Role: "member"}}}}
+	return &fakeBackend{skills: []model.Skill{{ID: "skill-1", Name: "unity-development", Description: "Unity conventions", Content: "---\nname: unity-development\ndescription: Unity conventions\n---\n", Files: []model.SkillFile{{ID: "f", Path: "references/test.md", Content: "test"}}}}, agents: []model.Agent{{ID: "agent-1", Name: "Unity Developer", Instructions: "work", RuntimeID: "runtime-1", RuntimeConfig: map[string]any{}, PermissionMode: "public_to", InvocationTargets: []model.InvocationTarget{workspace}, MaxConcurrentTasks: 1, MCPConfig: json.RawMessage(`{"token":"mcp-secret"}`), HasCustomEnv: true, CustomEnvKeyCount: 1}, {ID: "agent-2", Name: "Reviewer", RuntimeID: "runtime-1", RuntimeConfig: map[string]any{}, PermissionMode: "private", MaxConcurrentTasks: 1}}, runtimes: []model.Runtime{{ID: "runtime-1", Name: "desktop", CustomName: "Main PC", Provider: "codex"}}, agentSkills: map[string][]model.SkillSummary{"agent-1": {{ID: "skill-1", Name: "unity-development"}}}, agentEnvs: map[string]map[string]string{"agent-1": {"TOKEN": "env-secret"}}, squads: []model.Squad{{ID: "sq", Name: "Team", LeaderID: "agent-1", Instructions: "coordinate"}}, squadMembers: map[string][]model.SquadMember{"sq": {{MemberID: "agent-1", MemberType: "agent", Role: "leader"}, {MemberID: "agent-2", MemberType: "agent", Role: "member"}}}}
 }

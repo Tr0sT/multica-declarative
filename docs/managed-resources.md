@@ -22,13 +22,13 @@ such as `agents/codex/builder/agent.yaml`, `skills/unity/testing/SKILL.md`, and
 `squads/gameplay/reviewers/squad.yaml` require no manifest entries. Once a marker is found,
 discovery does not descend further into that resource directory.
 
-`export --force` preserves the relative directory of every existing agent it can match by the
-`name` in `agent.yaml`. Newly discovered Multica agents are written directly below `agents/` using
-their generated slug.
+`export --force` preserves the relative directory of every existing skill, agent, and squad it can
+match by declaration name. Newly discovered resources are written directly below their collection
+directory using a generated slug.
 
 ## Agents
 
-An agent may use the compact legacy form or the expanded form below.
+An agent may use a compact scalar permission or the expanded form below.
 
 ```yaml
 name: Unity Builder
@@ -59,7 +59,7 @@ multica:
   customArgs:
     - --full-auto
 
-  # Secret values are read locally and are never emitted by export.
+  # Secret values are declarative state stored beside the agent.
   customEnvFile: custom-env.json
   mcpConfigFile: mcp.json
 
@@ -82,7 +82,7 @@ multica:
 | Field | Plan/export | Apply | Notes |
 |---|---:|---:|---|
 | name, description, instructions | yes | yes | Name is currently also the identity key. |
-| runtime, runtimeConfig | yes | yes | `runtimeConfig` is managed only when present in YAML. |
+| runtime, runtimeConfig | yes | yes | Omitting `runtimeConfig` declares an empty object. |
 | model, thinkingLevel, maxConcurrentTasks | yes | yes | |
 | customArgs | yes | yes | Exported verbatim with the rest of the declaration. |
 | private/workspace/member invocation permissions | yes | yes | Team targets are rejected because the CLI does not support them. |
@@ -90,13 +90,16 @@ multica:
 | customEnvFile | yes | yes | Export writes `custom-env.json` beside `agent.yaml`. Use `{}` to clear. |
 | mcpConfigFile | yes | yes | Export writes `mcp.json`; export fails if Multica returns a redacted config. A file containing `null` clears it. |
 | avatarFile | yes | yes | Export downloads the current avatar when possible. |
-| archived | yes | yes | Managed only when explicitly present in YAML. |
+| archived | yes | yes | Omitting `archived` declares an active agent (`false`). |
 | disabledRuntimeSkills | yes | observe-only | Apply fails clearly when a change is requested. |
 | composioToolkitAllowlist | yes | observe-only | Apply fails clearly when a change is requested. |
 
 Observe-only fields are preserved by `export` and included in `plan`. They are not silently dropped.
 Creating an agent that requires a non-empty observe-only field is rejected, because the official CLI
 cannot faithfully reproduce it in a different workspace.
+
+Empty `disabledRuntimeSkills` and `composioToolkitAllowlist` values may be omitted; omission declares
+an empty list and still participates in drift detection.
 
 ### Secret files
 
@@ -110,11 +113,15 @@ cannot faithfully reproduce it in a different workspace.
 
 `mcpConfigFile` must contain any valid JSON accepted by Multica. Export writes both files with local
 mode `0600`; they are part of the desired state and should be committed with the agent declaration.
+All resource file references must be relative regular files inside their declaration directory;
+absolute paths, parent traversal, and symlinks are rejected.
+
+Do not put secret values in `customArgs` or `runtimeConfig`: the official Multica CLI accepts those
+fields only as command arguments. Use `customEnvFile` or `mcpConfigFile` for secret-bearing data.
 
 ## Squads
 
 ```yaml
-kind: Squad
 name: Unity Team
 description: Implements and reviews Unity tasks.
 instructionsFile: SQUAD.md

@@ -49,7 +49,7 @@ keys and a state file are added.
 ## Requirements
 
 - a recent authenticated `multica` CLI;
-- Go 1.23+ only when building from source.
+- Go 1.25+ only when building from source.
 
 Verify the Multica profile first:
 
@@ -95,10 +95,10 @@ Refreshing is explicit:
 multica-declarative export --output-dir ./my-workspace --force
 ```
 
-During a refresh, existing `agents/**/agent.yaml` files are matched to Multica agents by `name`.
-Their relative directories are preserved, including grouping directories such as `agents/main/`
-and `agents/vds/`. An agent not already present in the export tree is created directly under
-`agents/<slug>/`.
+During a refresh, existing skills, agents, and squads are matched by declaration name. Their
+relative directories are preserved, including grouping directories such as `agents/main/`,
+`agents/vds/`, or `skills/shared/`. A resource not already present in the export tree is created
+directly under its collection directory using a generated slug.
 
 `--force` replaces only generated `multica.yaml`, `agents/`, `skills/`, and `squads/` paths.
 Unrelated files and `.git/` are preserved.
@@ -204,7 +204,7 @@ Important compatibility boundary:
 gofmt -w .
 go vet ./...
 go test ./...
-go build ./cmd/multica-declarative
+go build -o ./bin/multica-declarative ./cmd/multica-declarative
 ```
 
 Or:

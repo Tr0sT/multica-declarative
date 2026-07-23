@@ -26,125 +26,205 @@ type Reconciler struct {
 	HTTPClient *http.Client
 }
 
+type observedAgent struct {
+	resource model.Agent
+	skills   []model.SkillSummary
+}
+
+type observedSquad struct {
+	resource model.Squad
+	members  []model.SquadMember
+}
+
+type inspection struct {
+	changes      []model.Change
+	skillChanges map[string]model.Change
+	agentChanges map[string]model.Change
+	squadChanges map[string]model.Change
+	skills       map[string]model.Skill
+	agents       map[string]observedAgent
+	squads       map[string]observedSquad
+	runtimeIDs   map[string]string
+	squadOps     backend.SquadOperations
+}
+
 func (r Reconciler) Plan(project model.Project) ([]model.Change, error) {
-	changes := []model.Change{}
-	remoteSkills, err := r.Backend.ListSkills()
+	state, err := r.inspect(project)
 	if err != nil {
 		return nil, err
+	}
+	return state.changes, nil
+}
+
+func (r Reconciler) inspect(project model.Project) (inspection, error) {
+	state := inspection{
+		skillChanges: map[string]model.Change{},
+		agentChanges: map[string]model.Change{},
+		squadChanges: map[string]model.Change{},
+		skills:       map[string]model.Skill{},
+		agents:       map[string]observedAgent{},
+		squads:       map[string]observedSquad{},
+	}
+	if r.Backend == nil {
+		return state, fmt.Errorf("reconcile backend is required")
+	}
+	remoteSkills, err := r.Backend.ListSkills()
+	if err != nil {
+		return state, err
 	}
 	remoteAgents, err := r.Backend.ListAgents()
 	if err != nil {
-		return nil, err
+		return state, err
 	}
 	runtimes, err := r.Backend.ListRuntimes()
 	if err != nil {
-		return nil, err
+		return state, err
 	}
 	runtimeIDs, err := ResolveRuntimes(project.RuntimeSelectors, runtimes)
 	if err != nil {
-		return nil, err
+		return state, err
 	}
+	state.runtimeIDs = runtimeIDs
 	for _, d := range project.Skills {
 		m := skillsNamed(remoteSkills, d.Name)
+		var change model.Change
 		switch len(m) {
 		case 0:
-			changes = append(changes, model.Change{Action: Create, Kind: "skill", Name: d.Name})
+			change = model.Change{Action: Create, Kind: "skill", Name: d.Name}
 		case 1:
 			a, err := r.Backend.GetSkill(m[0].ID)
 			if err != nil {
-				return nil, err
+				return state, err
 			}
-			changes = append(changes, makeChange("skill", d.Name, diffSkill(d, a)))
+			if a.ID == "" {
+				a.ID = m[0].ID
+			}
+			if a.ID == "" {
+				return state, fmt.Errorf("skill %q has no id", d.Name)
+			}
+			state.skills[d.Name] = a
+			change = makeChange("skill", d.Name, diffSkill(d, a))
 		default:
-			return nil, fmt.Errorf("multiple Multica skills named %q", d.Name)
+			return state, fmt.Errorf("multiple Multica skills named %q", d.Name)
 		}
+		state.skillChanges[d.Name] = change
+		state.changes = append(state.changes, change)
 	}
 	agentByName := map[string]model.Agent{}
 	for _, d := range project.Agents {
 		m := agentsNamed(remoteAgents, d.Name)
+		var change model.Change
 		switch len(m) {
 		case 0:
-			changes = append(changes, model.Change{Action: Create, Kind: "agent", Name: d.Name})
+			if err := validateObservedOnlyOnCreate(d); err != nil {
+				return state, err
+			}
+			if d.ManageCustomEnv || d.AvatarFile != "" || d.Archived {
+				if _, ok := r.Backend.(backend.AgentOperations); !ok {
+					return state, fmt.Errorf("backend cannot apply auxiliary fields for agent %q", d.Name)
+				}
+			}
+			change = model.Change{Action: Create, Kind: "agent", Name: d.Name}
 		case 1:
 			a, err := r.Backend.GetAgent(m[0].ID)
 			if err != nil {
-				return nil, err
+				return state, err
+			}
+			if a.ID == "" {
+				a.ID = m[0].ID
+			}
+			if a.ID == "" {
+				return state, fmt.Errorf("agent %q has no id", d.Name)
 			}
 			agentByName[d.Name] = a
 			skills, err := r.Backend.ListAgentSkills(a.ID)
 			if err != nil {
-				return nil, err
+				return state, err
 			}
 			fields, err := r.diffAgent(d, runtimeIDs[d.RuntimeRef], a, skills)
 			if err != nil {
-				return nil, err
+				return state, err
 			}
-			changes = append(changes, makeChange("agent", d.Name, fields))
+			if err := validateObservedOnlyChanges(d, a, skills); err != nil {
+				return state, err
+			}
+			if hasAnyField(fields, "customEnv", "avatar", "archived") || (a.Archived() && requiresActiveAgent(fields)) {
+				if _, ok := r.Backend.(backend.AgentOperations); !ok {
+					return state, fmt.Errorf("backend cannot apply auxiliary fields for agent %q", d.Name)
+				}
+			}
+			state.agents[d.Name] = observedAgent{resource: a, skills: skills}
+			change = makeChange("agent", d.Name, fields)
 		default:
-			return nil, fmt.Errorf("multiple Multica agents named %q", d.Name)
+			return state, fmt.Errorf("multiple Multica agents named %q", d.Name)
 		}
+		state.agentChanges[d.Name] = change
+		state.changes = append(state.changes, change)
 	}
 	if len(project.Squads) > 0 {
 		ops, ok := r.Backend.(backend.SquadOperations)
 		if !ok {
-			return nil, fmt.Errorf("backend does not support squads")
+			return state, fmt.Errorf("backend does not support squads")
 		}
+		state.squadOps = ops
 		actual, err := ops.ListSquads()
 		if err != nil {
-			return nil, err
+			return state, err
 		}
 		for _, d := range project.Squads {
 			m := squadsNamed(actual, d.Name)
+			var change model.Change
 			switch len(m) {
 			case 0:
-				changes = append(changes, model.Change{Action: Create, Kind: "squad", Name: d.Name})
+				change = model.Change{Action: Create, Kind: "squad", Name: d.Name}
 			case 1:
 				a, err := ops.GetSquad(m[0].ID)
 				if err != nil {
-					return nil, err
+					return state, err
+				}
+				if a.ID == "" {
+					a.ID = m[0].ID
+				}
+				if a.ID == "" {
+					return state, fmt.Errorf("squad %q has no id", d.Name)
 				}
 				members, err := ops.ListSquadMembers(a.ID)
 				if err != nil {
-					return nil, err
+					return state, err
 				}
 				fields := diffSquad(d, a, members, agentByName)
-				changes = append(changes, makeChange("squad", d.Name, fields))
+				state.squads[d.Name] = observedSquad{resource: a, members: members}
+				change = makeChange("squad", d.Name, fields)
 			default:
-				return nil, fmt.Errorf("multiple squads named %q", d.Name)
+				return state, fmt.Errorf("multiple squads named %q", d.Name)
 			}
+			state.squadChanges[d.Name] = change
+			state.changes = append(state.changes, change)
 		}
 	}
-	return changes, nil
+	return state, nil
 }
 
 func (r Reconciler) Apply(project model.Project, report func(model.Change)) error {
 	if report == nil {
 		report = func(model.Change) {}
 	}
-	remoteSkills, err := r.Backend.ListSkills()
+	state, err := r.inspect(project)
 	if err != nil {
 		return err
 	}
 	skillIDs := map[string]string{}
 	for _, d := range project.Skills {
-		m := skillsNamed(remoteSkills, d.Name)
-		var a model.Skill
-		var files []model.SkillFile
-		switch len(m) {
-		case 0:
+		change := state.skillChanges[d.Name]
+		a, exists := state.skills[d.Name]
+		files := append([]model.SkillFile(nil), a.Files...)
+		if !exists {
 			a, err = r.Backend.CreateSkill(skillInput(d))
 			if err != nil {
 				return err
 			}
-			report(model.Change{Action: Create, Kind: "skill", Name: d.Name})
-		case 1:
-			a, err = r.Backend.GetSkill(m[0].ID)
-			if err != nil {
-				return err
-			}
-			files = append([]model.SkillFile(nil), a.Files...)
-			fields := diffSkill(d, a)
-			if hasNonFileField(fields) {
+		} else {
+			if hasNonFileField(change.Fields) {
 				updated, e := r.Backend.UpdateSkill(a.ID, skillInput(d))
 				if e != nil {
 					return e
@@ -153,65 +233,32 @@ func (r Reconciler) Apply(project model.Project, report func(model.Change)) erro
 					a.ID = updated.ID
 				}
 			}
-			report(makeChange("skill", d.Name, fields))
-		default:
-			return fmt.Errorf("multiple skills named %q", d.Name)
+		}
+		if a.ID == "" {
+			return fmt.Errorf("skill %q has no id after reconciliation", d.Name)
 		}
 		if err := r.syncSkillFiles(d, a.ID, files); err != nil {
 			return err
 		}
 		skillIDs[d.Name] = a.ID
-	}
-	runtimes, err := r.Backend.ListRuntimes()
-	if err != nil {
-		return err
-	}
-	runtimeIDs, err := ResolveRuntimes(project.RuntimeSelectors, runtimes)
-	if err != nil {
-		return err
-	}
-	remoteAgents, err := r.Backend.ListAgents()
-	if err != nil {
-		return err
+		report(change)
 	}
 	agentIDs := map[string]string{}
 	for _, d := range project.Agents {
-		m := agentsNamed(remoteAgents, d.Name)
-		input := agentInput(d, runtimeIDs[d.RuntimeRef])
-		var a model.Agent
-		var actualSkills []model.SkillSummary
-		created := false
-		wasArchived := false
+		change := state.agentChanges[d.Name]
+		observed, exists := state.agents[d.Name]
+		a := observed.resource
+		actualSkills := observed.skills
+		created := !exists
+		input := agentInput(d, state.runtimeIDs[d.RuntimeRef])
 		restoredForUpdate := false
-		switch len(m) {
-		case 0:
-			if err := validateObservedOnlyOnCreate(d); err != nil {
-				return err
-			}
+		if created {
 			a, err = r.Backend.CreateAgent(input)
 			if err != nil {
 				return err
 			}
-			created = true
-			report(model.Change{Action: Create, Kind: "agent", Name: d.Name})
-		case 1:
-			a, err = r.Backend.GetAgent(m[0].ID)
-			if err != nil {
-				return err
-			}
-			actualSkills, err = r.Backend.ListAgentSkills(a.ID)
-			if err != nil {
-				return err
-			}
-			fields, err := r.diffAgent(d, runtimeIDs[d.RuntimeRef], a, actualSkills)
-			if err != nil {
-				return err
-			}
-			if err := validateObservedOnlyChanges(d, a, actualSkills); err != nil {
-				return err
-			}
-			wasArchived = a.Archived()
-			if wasArchived && requiresActiveAgent(fields) {
+		} else {
+			if a.Archived() && requiresActiveAgent(change.Fields) {
 				ops, ok := r.Backend.(backend.AgentOperations)
 				if !ok {
 					return fmt.Errorf("backend cannot restore archived agent %q", d.Name)
@@ -222,7 +269,7 @@ func (r Reconciler) Apply(project model.Project, report func(model.Change)) erro
 				a.ArchivedAt = nil
 				restoredForUpdate = true
 			}
-			base := baseAgentFields(fields)
+			base := baseAgentFields(change.Fields)
 			if len(base) > 0 {
 				updated, e := r.Backend.UpdateAgent(a.ID, input)
 				if e != nil {
@@ -232,63 +279,41 @@ func (r Reconciler) Apply(project model.Project, report func(model.Change)) erro
 					a.ID = updated.ID
 				}
 			}
-			report(makeChange("agent", d.Name, fields))
-		default:
-			return fmt.Errorf("multiple agents named %q", d.Name)
 		}
-		desiredEnabled := enabledSkillNames(d.SkillAssignments, d.Skills)
+		if a.ID == "" {
+			return fmt.Errorf("agent %q has no id after reconciliation", d.Name)
+		}
+		desiredEnabled := enabledSkillNames(d.SkillAssignments)
 		if created || !equalStrings(sortedSkillNames(actualSkills, true), sortedStrings(desiredEnabled)) {
 			ids := []string{}
 			for _, name := range desiredEnabled {
-				ids = append(ids, skillIDs[name])
+				id := skillIDs[name]
+				if id == "" {
+					return fmt.Errorf("agent %q references skill %q without a resolved id", d.Name, name)
+				}
+				ids = append(ids, id)
 			}
 			if err := r.Backend.SetAgentSkills(a.ID, ids); err != nil {
 				return err
 			}
 		}
 		if d.ManageCustomEnv {
-			ops, ok := r.Backend.(backend.AgentOperations)
-			if !ok {
-				return fmt.Errorf("backend cannot manage custom env")
-			}
-			actualEnv := map[string]string{}
-			if !created {
-				actualEnv, err = ops.GetAgentEnv(a.ID)
-				if err != nil {
-					return err
-				}
-			}
-			if created || !equalStringMap(d.CustomEnv, actualEnv) {
+			if created || hasAnyField(change.Fields, "customEnv") {
+				ops := r.Backend.(backend.AgentOperations)
 				if err := ops.SetAgentEnv(a.ID, d.CustomEnvFile); err != nil {
 					return err
 				}
 			}
 		}
 		if d.AvatarFile != "" {
-			different := created || a.AvatarURL == nil || *a.AvatarURL == ""
-			if !different {
-				different, err = r.avatarDiffers(d.AvatarFile, *a.AvatarURL)
-				if err != nil {
-					return err
-				}
-			}
-			if different {
-				ops, ok := r.Backend.(backend.AgentOperations)
-				if !ok {
-					return fmt.Errorf("backend cannot upload avatar")
-				}
+			if created || hasAnyField(change.Fields, "avatar") {
+				ops := r.Backend.(backend.AgentOperations)
 				if err := ops.UploadAgentAvatar(a.ID, d.AvatarFile); err != nil {
 					return err
 				}
 			}
 		}
-		desiredArchived := wasArchived
-		if created {
-			desiredArchived = false
-		}
-		if d.ManageArchived {
-			desiredArchived = d.Archived
-		}
+		desiredArchived := d.Archived
 		if desiredArchived != a.Archived() || (desiredArchived && restoredForUpdate) {
 			ops, ok := r.Backend.(backend.AgentOperations)
 			if !ok {
@@ -305,26 +330,23 @@ func (r Reconciler) Apply(project model.Project, report func(model.Change)) erro
 			}
 		}
 		agentIDs[d.Name] = a.ID
+		report(change)
 	}
 	if len(project.Squads) > 0 {
-		ops, ok := r.Backend.(backend.SquadOperations)
-		if !ok {
-			return fmt.Errorf("backend does not support squads")
-		}
-		actual, err := ops.ListSquads()
-		if err != nil {
-			return err
-		}
+		ops := state.squadOps
 		for _, d := range project.Squads {
 			leaderID := agentIDs[d.Leader]
-			m := squadsNamed(actual, d.Name)
-			var a model.Squad
-			var members []model.SquadMember
-			switch len(m) {
-			case 0:
+			change := state.squadChanges[d.Name]
+			observed, exists := state.squads[d.Name]
+			a := observed.resource
+			members := observed.members
+			if !exists {
 				a, err = ops.CreateSquad(squadInput(d, leaderID))
 				if err != nil {
 					return err
+				}
+				if a.ID == "" {
+					return fmt.Errorf("create squad %q returned no id", d.Name)
 				}
 				members, err = ops.ListSquadMembers(a.ID)
 				if err != nil {
@@ -338,36 +360,32 @@ func (r Reconciler) Apply(project model.Project, report func(model.Change)) erro
 					fields = append(fields, "avatarUrl")
 				}
 				if len(fields) > 0 {
-					a, err = ops.UpdateSquad(a.ID, squadInput(d, leaderID), fields)
+					updated, updateErr := ops.UpdateSquad(a.ID, squadInput(d, leaderID), fields)
+					err = updateErr
 					if err != nil {
 						return err
 					}
+					if updated.ID != "" {
+						a.ID = updated.ID
+					}
 				}
-				report(model.Change{Action: Create, Kind: "squad", Name: d.Name})
-			case 1:
-				a, err = ops.GetSquad(m[0].ID)
-				if err != nil {
-					return err
-				}
-				members, err = ops.ListSquadMembers(a.ID)
-				if err != nil {
-					return err
-				}
-				fields := diffSquad(d, a, members, agentsByIDName(agentIDs))
-				base := squadBaseFields(fields)
+			} else {
+				base := squadBaseFields(change.Fields)
 				if len(base) > 0 {
-					a, err = ops.UpdateSquad(a.ID, squadInput(d, leaderID), base)
+					updated, updateErr := ops.UpdateSquad(a.ID, squadInput(d, leaderID), base)
+					err = updateErr
 					if err != nil {
 						return err
 					}
+					if updated.ID != "" {
+						a.ID = updated.ID
+					}
 				}
-				report(makeChange("squad", d.Name, fields))
-			default:
-				return fmt.Errorf("multiple squads named %q", d.Name)
 			}
 			if err := syncSquadMembers(ops, a.ID, d, agentIDs, members); err != nil {
 				return err
 			}
+			report(change)
 		}
 	}
 	return nil
@@ -384,7 +402,7 @@ func (r Reconciler) diffAgent(d model.AgentSpec, runtimeID string, a model.Agent
 	if runtimeID != a.RuntimeID {
 		fields = append(fields, "runtime")
 	}
-	if d.ManageRuntimeConfig && !equalJSON(d.RuntimeConfig, a.RuntimeConfig) {
+	if !equalJSON(d.RuntimeConfig, a.RuntimeConfig) {
 		fields = append(fields, "runtimeConfig")
 	}
 	if d.ModelID != a.Model {
@@ -402,7 +420,7 @@ func (r Reconciler) diffAgent(d model.AgentSpec, runtimeID string, a model.Agent
 	if !permissionMatches(d, a) {
 		fields = append(fields, "permission")
 	}
-	if !equalSkillAssignments(d.SkillAssignments, d.Skills, skills) {
+	if !equalSkillAssignments(d.SkillAssignments, skills) {
 		fields = append(fields, "skills")
 	}
 	if d.ManageMCPConfig {
@@ -439,16 +457,16 @@ func (r Reconciler) diffAgent(d model.AgentSpec, runtimeID string, a model.Agent
 			}
 		}
 	}
-	if d.ManageArchived && d.Archived != a.Archived() {
+	if d.Archived != a.Archived() {
 		fields = append(fields, "archived")
 	}
-	if d.ManageDisabledRuntimeSkills && !equalDisabled(d.DisabledRuntimeSkills, a.DisabledRuntimeSkills) {
+	if !equalDisabled(d.DisabledRuntimeSkills, a.DisabledRuntimeSkills) {
 		fields = append(fields, "disabledRuntimeSkills")
 	}
-	if d.ManageComposioToolkitAllowlist && !equalStrings(sortedStrings(d.ComposioToolkitAllowlist), sortedStrings(a.ComposioToolkitAllowlist)) {
-		if a.ComposioToolkitAllowlistRedacted {
-			return nil, fmt.Errorf("agent %q Composio allowlist is redacted", d.Name)
-		}
+	if a.ComposioToolkitAllowlistRedacted {
+		return nil, fmt.Errorf("agent %q Composio allowlist is redacted", d.Name)
+	}
+	if !equalStrings(sortedStrings(d.ComposioToolkitAllowlist), sortedStrings(a.ComposioToolkitAllowlist)) {
 		fields = append(fields, "composioToolkitAllowlist")
 	}
 	return fields, nil
@@ -498,7 +516,8 @@ func syncSquadMembers(ops backend.SquadOperations, id string, d model.SquadSpec,
 	for _, m := range actual {
 		actualMap[m.MemberType+":"+m.MemberID] = m
 	}
-	for key, m := range desired {
+	for _, key := range sortedMapKeys(desired) {
+		m := desired[key]
 		a, ok := actualMap[key]
 		if !ok {
 			if err := ops.AddSquadMember(id, m); err != nil {
@@ -510,7 +529,8 @@ func syncSquadMembers(ops backend.SquadOperations, id string, d model.SquadSpec,
 			}
 		}
 	}
-	for key, m := range actualMap {
+	for _, key := range sortedMapKeys(actualMap) {
+		m := actualMap[key]
 		if _, ok := desired[key]; !ok {
 			if err := ops.RemoveSquadMember(id, m); err != nil {
 				return err
@@ -518,6 +538,15 @@ func syncSquadMembers(ops backend.SquadOperations, id string, d model.SquadSpec,
 		}
 	}
 	return nil
+}
+
+func sortedMapKeys[T any](values map[string]T) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func diffSquad(d model.SquadSpec, a model.Squad, members []model.SquadMember, agents map[string]model.Agent) []string {
@@ -585,7 +614,7 @@ func validateObservedOnlyOnCreate(d model.AgentSpec) error {
 			disabled = true
 		}
 	}
-	if disabled || (d.ManageDisabledRuntimeSkills && len(d.DisabledRuntimeSkills) > 0) || (d.ManageComposioToolkitAllowlist && len(d.ComposioToolkitAllowlist) > 0) {
+	if disabled || len(d.DisabledRuntimeSkills) > 0 || len(d.ComposioToolkitAllowlist) > 0 {
 		return fmt.Errorf("agent %q uses fields that the official Multica CLI can only observe, not create: disabled skills, disabledRuntimeSkills, or composioToolkitAllowlist", d.Name)
 	}
 	for _, t := range d.InvocationTargets {
@@ -596,17 +625,17 @@ func validateObservedOnlyOnCreate(d model.AgentSpec) error {
 	return nil
 }
 func validateObservedOnlyChanges(d model.AgentSpec, a model.Agent, skills []model.SkillSummary) error {
-	if !equalSkillAssignments(d.SkillAssignments, d.Skills, skills) {
+	if !equalSkillAssignments(d.SkillAssignments, skills) {
 		for _, s := range d.SkillAssignments {
 			if !s.Enabled {
 				return fmt.Errorf("agent %q disabled skill assignments cannot be changed through the official CLI", d.Name)
 			}
 		}
 	}
-	if d.ManageDisabledRuntimeSkills && !equalDisabled(d.DisabledRuntimeSkills, a.DisabledRuntimeSkills) {
+	if !equalDisabled(d.DisabledRuntimeSkills, a.DisabledRuntimeSkills) {
 		return fmt.Errorf("agent %q disabledRuntimeSkills cannot be changed through the official CLI", d.Name)
 	}
-	if d.ManageComposioToolkitAllowlist && !equalStrings(sortedStrings(d.ComposioToolkitAllowlist), sortedStrings(a.ComposioToolkitAllowlist)) {
+	if !equalStrings(sortedStrings(d.ComposioToolkitAllowlist), sortedStrings(a.ComposioToolkitAllowlist)) {
 		return fmt.Errorf("agent %q composioToolkitAllowlist cannot be changed through the official CLI", d.Name)
 	}
 	return nil
@@ -635,11 +664,7 @@ func diffSkill(d model.SkillSpec, a model.Skill) []string {
 func permissionMatches(d model.AgentSpec, a model.Agent) bool {
 	mode := d.PermissionMode
 	if mode == "" {
-		if d.Permission == "workspace" {
-			mode = "public_to"
-		} else {
-			mode = "private"
-		}
+		mode = "private"
 	}
 	if mode != a.PermissionMode {
 		return false
@@ -665,13 +690,7 @@ func targetKeys(items []model.InvocationTarget) []string {
 	sort.Strings(out)
 	return out
 }
-func equalSkillAssignments(d []model.AgentSkillSpec, legacy []string, a []model.SkillSummary) bool {
-	if len(d) == 0 {
-		d = make([]model.AgentSkillSpec, len(legacy))
-		for i, n := range legacy {
-			d[i] = model.AgentSkillSpec{Name: n, Enabled: true}
-		}
-	}
+func equalSkillAssignments(d []model.AgentSkillSpec, a []model.SkillSummary) bool {
 	dm := map[string]bool{}
 	for _, s := range d {
 		dm[s.Name] = s.Enabled
@@ -694,10 +713,7 @@ func equalSkillAssignments(d []model.AgentSkillSpec, legacy []string, a []model.
 	}
 	return true
 }
-func enabledSkillNames(assignments []model.AgentSkillSpec, legacy []string) []string {
-	if len(assignments) == 0 {
-		return append([]string(nil), legacy...)
-	}
+func enabledSkillNames(assignments []model.AgentSkillSpec) []string {
 	out := []string{}
 	for _, s := range assignments {
 		if s.Enabled {
@@ -720,27 +736,49 @@ func equalDisabled(a, b []model.DisabledRuntimeSkill) bool {
 	return equalStrings(ka, kb)
 }
 func disabledKey(v model.DisabledRuntimeSkill) string {
-	return strings.Join([]string{v.RuntimeID, v.Provider, v.Root, v.Key, v.Name, v.Plugin}, "|")
+	encoded, _ := json.Marshal(v)
+	return string(encoded)
 }
 func equalJSON(a, b any) bool {
-	aa, _ := json.Marshal(a)
-	bb, _ := json.Marshal(b)
+	aa, err := json.Marshal(a)
+	if err != nil {
+		return false
+	}
+	bb, err := json.Marshal(b)
+	if err != nil {
+		return false
+	}
 	return equalRawJSON(aa, bb)
 }
 func equalRawJSON(a, b []byte) bool {
-	var av, bv any
 	if len(bytes.TrimSpace(a)) == 0 {
 		a = []byte("null")
 	}
 	if len(bytes.TrimSpace(b)) == 0 {
 		b = []byte("null")
 	}
-	if json.Unmarshal(a, &av) != nil || json.Unmarshal(b, &bv) != nil {
+	aa, aErr := canonicalJSON(a)
+	bb, bErr := canonicalJSON(b)
+	if aErr != nil || bErr != nil {
 		return bytes.Equal(bytes.TrimSpace(a), bytes.TrimSpace(b))
 	}
-	aa, _ := json.Marshal(av)
-	bb, _ := json.Marshal(bv)
 	return bytes.Equal(aa, bb)
+}
+
+func canonicalJSON(value []byte) ([]byte, error) {
+	decoder := json.NewDecoder(bytes.NewReader(value))
+	decoder.UseNumber()
+	var decoded any
+	if err := decoder.Decode(&decoded); err != nil {
+		return nil, err
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			return nil, fmt.Errorf("multiple JSON values")
+		}
+		return nil, err
+	}
+	return json.Marshal(decoded)
 }
 
 func (r Reconciler) syncSkillFiles(d model.SkillSpec, id string, actual []model.SkillFile) error {
@@ -769,7 +807,8 @@ func (r Reconciler) syncSkillFiles(d model.SkillSpec, id string, actual []model.
 }
 func ResolveRuntimes(selectors map[string]model.RuntimeSelector, runtimes []model.Runtime) (map[string]string, error) {
 	out := map[string]string{}
-	for alias, s := range selectors {
+	for _, alias := range sortedMapKeys(selectors) {
+		s := selectors[alias]
 		matches := []model.Runtime{}
 		for _, v := range runtimes {
 			if (s.ID == "" || v.ID == s.ID) && (s.Name == "" || v.Name == s.Name) && (s.CustomName == "" || v.CustomName == s.CustomName) && (s.Provider == "" || v.Provider == s.Provider) {
@@ -804,9 +843,9 @@ func skillInput(v model.SkillSpec) model.SkillInput {
 func agentInput(v model.AgentSpec, runtimeID string) model.AgentInput {
 	return model.AgentInput{
 		Name: v.Name, Description: v.Description, Instructions: v.Instructions, RuntimeID: runtimeID,
-		ManageRuntimeConfig: v.ManageRuntimeConfig, RuntimeConfig: v.RuntimeConfig,
-		Model: v.ModelID, ThinkingLevel: v.ThinkingLevel, CustomArgs: append([]string(nil), v.CustomArgs...),
-		Permission: v.Permission, PermissionMode: v.PermissionMode,
+		RuntimeConfig: v.RuntimeConfig,
+		Model:         v.ModelID, ThinkingLevel: v.ThinkingLevel, CustomArgs: append([]string(nil), v.CustomArgs...),
+		PermissionMode:     v.PermissionMode,
 		InvocationTargets:  append([]model.InvocationTarget(nil), v.InvocationTargets...),
 		MaxConcurrentTasks: v.MaxConcurrentTasks, ManageMCPConfig: v.ManageMCPConfig, MCPConfigFile: v.MCPConfigFile,
 	}
@@ -902,6 +941,17 @@ func requiresActiveAgent(fields []string) bool {
 	return false
 }
 
+func hasAnyField(fields []string, wanted ...string) bool {
+	for _, field := range fields {
+		for _, candidate := range wanted {
+			if field == candidate {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func baseAgentFields(v []string) []string {
 	out := []string{}
 	for _, f := range v {
@@ -918,13 +968,6 @@ func squadBaseFields(v []string) []string {
 		if f != "members" {
 			out = append(out, f)
 		}
-	}
-	return out
-}
-func agentsByIDName(ids map[string]string) map[string]model.Agent {
-	out := map[string]model.Agent{}
-	for name, id := range ids {
-		out[name] = model.Agent{ID: id, Name: name}
 	}
 	return out
 }

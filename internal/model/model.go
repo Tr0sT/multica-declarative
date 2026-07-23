@@ -20,7 +20,6 @@ type SkillSpec struct {
 	Name        string
 	Description string
 	Content     string
-	SourceDir   string
 	ContentPath string
 	Files       []SkillFileSpec
 }
@@ -45,35 +44,28 @@ type DisabledRuntimeSkill struct {
 }
 
 type AgentSpec struct {
-	Name                           string
-	Description                    string
-	Instructions                   string
-	ModelID                        string
-	Skills                         []string // Backward-compatible enabled skill names.
-	SkillAssignments               []AgentSkillSpec
-	RuntimeRef                     string
-	ManageRuntimeConfig            bool
-	RuntimeConfig                  map[string]any
-	ThinkingLevel                  string
-	MaxConcurrentTasks             int
-	Permission                     string // Backward-compatible private/workspace value.
-	PermissionMode                 string
-	InvocationTargets              []InvocationTarget
-	CustomArgs                     []string
-	ManageCustomEnv                bool
-	CustomEnv                      map[string]string
-	CustomEnvFile                  string
-	ManageMCPConfig                bool
-	MCPConfig                      json.RawMessage
-	MCPConfigFile                  string
-	AvatarFile                     string
-	ManageArchived                 bool
-	Archived                       bool
-	ManageDisabledRuntimeSkills    bool
-	DisabledRuntimeSkills          []DisabledRuntimeSkill
-	ManageComposioToolkitAllowlist bool
-	ComposioToolkitAllowlist       []string
-	SourcePath                     string
+	Name                     string
+	Description              string
+	Instructions             string
+	ModelID                  string
+	SkillAssignments         []AgentSkillSpec
+	RuntimeRef               string
+	RuntimeConfig            map[string]any
+	ThinkingLevel            string
+	MaxConcurrentTasks       int
+	PermissionMode           string
+	InvocationTargets        []InvocationTarget
+	CustomArgs               []string
+	ManageCustomEnv          bool
+	CustomEnv                map[string]string
+	CustomEnvFile            string
+	ManageMCPConfig          bool
+	MCPConfig                json.RawMessage
+	MCPConfigFile            string
+	AvatarFile               string
+	Archived                 bool
+	DisabledRuntimeSkills    []DisabledRuntimeSkill
+	ComposioToolkitAllowlist []string
 }
 
 type SquadMemberSpec struct {
@@ -84,18 +76,15 @@ type SquadMemberSpec struct {
 }
 
 type SquadSpec struct {
-	Name             string
-	Description      string
-	Instructions     string
-	Leader           string
-	AvatarURL        string
-	Members          []SquadMemberSpec
-	SourcePath       string
-	InstructionsFile string
+	Name         string
+	Description  string
+	Instructions string
+	Leader       string
+	AvatarURL    string
+	Members      []SquadMemberSpec
 }
 
 type Project struct {
-	WorkspacePath    string
 	RuntimeSelectors map[string]RuntimeSelector
 	Skills           []SkillSpec
 	Agents           []AgentSpec
@@ -143,7 +132,6 @@ type Agent struct {
 	ComposioToolkitAllowlist         []string               `json:"composio_toolkit_allowlist"`
 	ComposioToolkitAllowlistRedacted bool                   `json:"composio_toolkit_allowlist_redacted"`
 	DisabledRuntimeSkills            []DisabledRuntimeSkill `json:"disabled_runtime_skills"`
-	Skills                           []SkillSummary         `json:"skills"`
 	ArchivedAt                       *string                `json:"archived_at"`
 }
 
@@ -154,7 +142,6 @@ type Runtime struct {
 	Name       string `json:"name"`
 	CustomName string `json:"custom_name"`
 	Provider   string `json:"provider"`
-	Status     string `json:"status"`
 }
 
 type Squad struct {
@@ -184,21 +171,19 @@ type SkillFileInput struct {
 }
 
 type AgentInput struct {
-	Name                string
-	Description         string
-	Instructions        string
-	RuntimeID           string
-	ManageRuntimeConfig bool
-	RuntimeConfig       map[string]any
-	Model               string
-	ThinkingLevel       string
-	CustomArgs          []string
-	Permission          string // Backward-compatible private/workspace.
-	PermissionMode      string
-	InvocationTargets   []InvocationTarget
-	MaxConcurrentTasks  int
-	ManageMCPConfig     bool
-	MCPConfigFile       string
+	Name               string
+	Description        string
+	Instructions       string
+	RuntimeID          string
+	RuntimeConfig      map[string]any
+	Model              string
+	ThinkingLevel      string
+	CustomArgs         []string
+	PermissionMode     string
+	InvocationTargets  []InvocationTarget
+	MaxConcurrentTasks int
+	ManageMCPConfig    bool
+	MCPConfigFile      string
 }
 
 type SquadInput struct {

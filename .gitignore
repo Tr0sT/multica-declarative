@@ -1,5 +1,6 @@
 /bin/
 /dist/
+/multica-declarative
 /coverage.out
 *.test
 .DS_Store

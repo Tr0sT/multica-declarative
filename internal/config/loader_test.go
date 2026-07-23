@@ -89,69 +89,60 @@ description: Example
 	}
 }
 
-func TestRejectsRemovedRuntimeProfilesField(t *testing.T) {
+func TestRejectsMultipleYAMLDocuments(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
-	writeFile(t, filepath.Join(root, "multica.yaml"), `apiVersion: multica-declarative/v1alpha1
-runtimeProfiles: []
-`)
-	writeFile(t, filepath.Join(root, "skills/example/SKILL.md"), `---
-name: example
-description: Example
----
-`)
+	writeFile(t, filepath.Join(root, "multica.yaml"), "apiVersion: multica-declarative/v1alpha1\n---\napiVersion: multica-declarative/v1alpha1\n")
 
 	_, err := Load(filepath.Join(root, "multica.yaml"))
-	if err == nil || !strings.Contains(err.Error(), "field runtimeProfiles not found") {
-		t.Fatalf("expected removed runtimeProfiles field error, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "multiple YAML documents") {
+		t.Fatalf("expected multiple-document error, got %v", err)
 	}
 }
 
-func TestRejectsAgentKindField(t *testing.T) {
+func TestRejectsResourceSymlinks(t *testing.T) {
 	t.Parallel()
-	root := t.TempDir()
-	writeFile(t, filepath.Join(root, "multica.yaml"), `apiVersion: multica-declarative/v1alpha1
-runtimes:
-  desktop:
-    name: desktop
-`)
-	writeFile(t, filepath.Join(root, "agents/codex/agent/agent.yaml"), `kind: Prompt
-name: Agent
-multica:
-  runtime: desktop
-`)
+	t.Run("declaration marker", func(t *testing.T) {
+		root := t.TempDir()
+		outside := filepath.Join(t.TempDir(), "SKILL.md")
+		writeFile(t, filepath.Join(root, "multica.yaml"), "apiVersion: multica-declarative/v1alpha1\n")
+		writeFile(t, outside, "---\nname: escaped\ndescription: Escaped\n---\n")
+		if err := os.MkdirAll(filepath.Join(root, "skills", "escaped"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(outside, filepath.Join(root, "skills", "escaped", "SKILL.md")); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Load(filepath.Join(root, "multica.yaml")); err == nil || !strings.Contains(err.Error(), "symlink") {
+			t.Fatalf("expected symlink error, got %v", err)
+		}
+	})
 
-	_, err := Load(filepath.Join(root, "multica.yaml"))
-	if err == nil || !strings.Contains(err.Error(), "field kind not found") {
-		t.Fatalf("expected strict agent kind error, got %v", err)
-	}
+	t.Run("referenced file", func(t *testing.T) {
+		root := t.TempDir()
+		outside := filepath.Join(t.TempDir(), "AGENT.md")
+		writeFile(t, filepath.Join(root, "multica.yaml"), "apiVersion: multica-declarative/v1alpha1\nruntimes:\n  local:\n    id: runtime-1\n")
+		writeFile(t, filepath.Join(root, "agents", "agent", "agent.yaml"), "name: Agent\ninstructionsFile: AGENT.md\nmultica:\n  runtime: local\n")
+		writeFile(t, outside, "escaped\n")
+		if err := os.Symlink(outside, filepath.Join(root, "agents", "agent", "AGENT.md")); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Load(filepath.Join(root, "multica.yaml")); err == nil || !strings.Contains(err.Error(), "symlink") {
+			t.Fatalf("expected symlink error, got %v", err)
+		}
+	})
 }
 
-func TestRejectsRemovedWorkspaceFields(t *testing.T) {
+func TestRejectsNullCustomEnvironment(t *testing.T) {
 	t.Parallel()
-	tests := []struct {
-		name  string
-		field string
-		value string
-	}{
-		{name: "kind", field: "kind", value: "Workspace"},
-		{name: "skills", field: "skills", value: "[]"},
-		{name: "agents", field: "agents", value: "[]"},
-		{name: "squads", field: "squads", value: "[]"},
-	}
-	for _, test := range tests {
-		test := test
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-			root := t.TempDir()
-			manifest := "apiVersion: multica-declarative/v1alpha1\n" + test.field + ": " + test.value + "\n"
-			writeFile(t, filepath.Join(root, "multica.yaml"), manifest)
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "multica.yaml"), "apiVersion: multica-declarative/v1alpha1\nruntimes:\n  local:\n    id: runtime-1\n")
+	writeFile(t, filepath.Join(root, "agents", "agent", "agent.yaml"), "name: Agent\nmultica:\n  runtime: local\n  customEnvFile: custom-env.json\n")
+	writeFile(t, filepath.Join(root, "agents", "agent", "custom-env.json"), "null\n")
 
-			_, err := Load(filepath.Join(root, "multica.yaml"))
-			if err == nil || !strings.Contains(err.Error(), "field "+test.field+" not found") {
-				t.Fatalf("expected removed %s field error, got %v", test.field, err)
-			}
-		})
+	_, err := Load(filepath.Join(root, "multica.yaml"))
+	if err == nil || !strings.Contains(err.Error(), "must contain a JSON object") {
+		t.Fatalf("expected object error, got %v", err)
 	}
 }
 

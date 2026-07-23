@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -103,13 +104,21 @@ func (c *CLI) ListAgentSkills(id string) ([]model.SkillSummary, error) {
 }
 func (c *CLI) CreateAgent(in model.AgentInput) (model.Agent, error) {
 	var v model.Agent
-	err := c.runJSON(&v, c.agentArgs([]string{"agent", "create"}, in, false)...)
+	args, err := c.agentArgs([]string{"agent", "create"}, in, false)
+	if err != nil {
+		return v, err
+	}
+	err = c.runJSON(&v, args...)
 	normalizeAgent(&v)
 	return v, err
 }
 func (c *CLI) UpdateAgent(id string, in model.AgentInput) (model.Agent, error) {
 	var v model.Agent
-	err := c.runJSON(&v, c.agentArgs([]string{"agent", "update", id}, in, true)...)
+	args, err := c.agentArgs([]string{"agent", "update", id}, in, true)
+	if err != nil {
+		return v, err
+	}
+	err = c.runJSON(&v, args...)
 	normalizeAgent(&v)
 	return v, err
 }
@@ -216,7 +225,7 @@ func (c *CLI) RemoveSquadMember(id string, m model.SquadMember) error {
 	return c.run("squad", "member", "remove", id, "--member-id", m.MemberID, "--type", m.MemberType, "--output", "json")
 }
 
-func (c *CLI) agentArgs(prefix []string, in model.AgentInput, includeClears bool) []string {
+func (c *CLI) agentArgs(prefix []string, in model.AgentInput, includeClears bool) ([]string, error) {
 	args := append([]string{}, prefix...)
 	args = append(args, "--name", in.Name, "--runtime-id", in.RuntimeID)
 	if includeClears || in.Description != "" {
@@ -236,35 +245,31 @@ func (c *CLI) agentArgs(prefix []string, in model.AgentInput, includeClears bool
 		if v == nil {
 			v = []string{}
 		}
-		b, _ := json.Marshal(v)
+		b, err := json.Marshal(v)
+		if err != nil {
+			return nil, fmt.Errorf("encode custom arguments: %w", err)
+		}
 		args = append(args, "--custom-args", string(b))
 	}
-	if in.ManageRuntimeConfig {
-		v := in.RuntimeConfig
-		if v == nil {
-			v = map[string]any{}
-		}
-		b, _ := json.Marshal(v)
-		args = append(args, "--runtime-config", string(b))
+	v := in.RuntimeConfig
+	if v == nil {
+		v = map[string]any{}
 	}
+	b, err := json.Marshal(v)
+	if err != nil {
+		return nil, fmt.Errorf("encode runtime config: %w", err)
+	}
+	args = append(args, "--runtime-config", string(b))
 	if in.ManageMCPConfig {
 		args = append(args, "--mcp-config-file", in.MCPConfigFile)
 	}
 	mode := in.PermissionMode
 	if mode == "" {
-		if in.Permission == "workspace" {
-			mode = "public_to"
-		} else {
-			mode = "private"
-		}
+		mode = "private"
 	}
 	args = append(args, "--max-concurrent-tasks", strconv.Itoa(in.MaxConcurrentTasks), "--permission-mode", mode)
 	if mode == "public_to" {
-		targets := in.InvocationTargets
-		if len(targets) == 0 && in.Permission == "workspace" {
-			targets = []model.InvocationTarget{{TargetType: "workspace"}}
-		}
-		for _, target := range targets {
+		for _, target := range in.InvocationTargets {
 			switch target.TargetType {
 			case "workspace":
 				args = append(args, "--public-to-workspace")
@@ -276,7 +281,7 @@ func (c *CLI) agentArgs(prefix []string, in model.AgentInput, includeClears bool
 		}
 	}
 	args = append(args, "--output", "json")
-	return args
+	return args, nil
 }
 
 func (c *CLI) runJSON(target any, args ...string) error {
@@ -285,19 +290,16 @@ func (c *CLI) runJSON(target any, args ...string) error {
 		return err
 	}
 	if len(bytes.TrimSpace(stdout)) == 0 {
-		return fmt.Errorf("%s returned empty output for %s", c.Binary, strings.Join(args, " "))
+		return fmt.Errorf("%s returned empty output", c.command(args))
 	}
 	if err := json.Unmarshal(stdout, target); err != nil {
-		return fmt.Errorf("%s returned invalid JSON for %s: %w", c.Binary, strings.Join(args, " "), err)
+		return fmt.Errorf("%s returned invalid JSON: %w", c.command(args), err)
 	}
 	return nil
 }
 func (c *CLI) run(args ...string) error { _, err := c.execute(args...); return err }
 func (c *CLI) execute(args ...string) ([]byte, error) {
-	binary := c.Binary
-	if binary == "" {
-		binary = "multica"
-	}
+	binary := c.binary()
 	timeout := c.Timeout
 	if timeout <= 0 {
 		timeout = defaultTimeout
@@ -313,14 +315,77 @@ func (c *CLI) execute(args ...string) ([]byte, error) {
 		return stdout, nil
 	}
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-		return nil, fmt.Errorf("%s %s timed out after %s", binary, strings.Join(args, " "), timeout)
+		return nil, fmt.Errorf("%s timed out after %s", c.command(args), timeout)
 	}
-	message := fmt.Sprintf("%s %s failed", binary, strings.Join(args, " "))
+	message := c.command(args) + " failed"
 	if text := strings.TrimSpace(string(stderr)); text != "" {
-		message += ":\n" + text
+		if usesSecretFile(args) {
+			message += ":\n<stderr redacted because the command used a secret file>"
+		} else {
+			message += ":\n" + redactSensitiveValues(text, args)
+		}
 	}
-	return nil, fmt.Errorf("%s: %w", message, err)
+	return nil, fmt.Errorf("%s: %w", message, redactedError{err: err, args: args})
 }
+
+func (c *CLI) binary() string {
+	if c.Binary != "" {
+		return c.Binary
+	}
+	return "multica"
+}
+
+func (c *CLI) command(args []string) string {
+	redacted := append([]string(nil), args...)
+	for index := 0; index < len(redacted)-1; index++ {
+		if isSensitiveFlag(redacted[index]) {
+			redacted[index+1] = "<redacted>"
+			index++
+		}
+	}
+	return strings.Join(append([]string{c.binary()}, redacted...), " ")
+}
+
+func isSensitiveFlag(value string) bool {
+	return value == "--custom-args" || value == "--runtime-config"
+}
+
+func usesSecretFile(args []string) bool {
+	for _, value := range args {
+		if value == "--custom-env-file" || value == "--mcp-config-file" {
+			return true
+		}
+	}
+	return false
+}
+
+func redactSensitiveValues(value string, args []string) string {
+	secrets := []string{}
+	for index := 0; index < len(args)-1; index++ {
+		if isSensitiveFlag(args[index]) && args[index+1] != "" {
+			secrets = append(secrets, args[index+1])
+			index++
+		}
+	}
+	sort.Slice(secrets, func(i, j int) bool { return len(secrets[i]) > len(secrets[j]) })
+	for _, secret := range secrets {
+		value = strings.ReplaceAll(value, secret, "<redacted>")
+	}
+	return value
+}
+
+type redactedError struct {
+	err  error
+	args []string
+}
+
+func (e redactedError) Error() string {
+	if usesSecretFile(e.args) {
+		return "command failed with secret-bearing input"
+	}
+	return redactSensitiveValues(e.err.Error(), e.args)
+}
+func (e redactedError) Unwrap() error { return e.err }
 func normalizeAgent(v *model.Agent) {
 	if v.PermissionMode == "" {
 		v.PermissionMode = "private"
@@ -336,9 +401,6 @@ func normalizeAgent(v *model.Agent) {
 	}
 	if v.InvocationTargets == nil {
 		v.InvocationTargets = []model.InvocationTarget{}
-	}
-	if v.Skills == nil {
-		v.Skills = []model.SkillSummary{}
 	}
 	if v.DisabledRuntimeSkills == nil {
 		v.DisabledRuntimeSkills = []model.DisabledRuntimeSkill{}

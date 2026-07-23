@@ -111,20 +111,17 @@ func TestFullAgentNoop(t *testing.T) {
 	b.env = map[string]string{"TOKEN": "x"}
 	p := exampleProject(t)
 	p.Agents[0].Description = "desc"
-	p.Agents[0].ManageRuntimeConfig = true
 	p.Agents[0].RuntimeConfig = map[string]any{"sandbox": "strict"}
 	p.Agents[0].ThinkingLevel = "high"
 	p.Agents[0].CustomArgs = []string{"--x"}
 	p.Agents[0].MaxConcurrentTasks = 2
 	p.Agents[0].PermissionMode = "public_to"
 	p.Agents[0].InvocationTargets = []model.InvocationTarget{{TargetType: "member", TargetID: &member}}
-	p.Agents[0].Permission = ""
 	p.Agents[0].SkillAssignments = []model.AgentSkillSpec{{Name: "unity", Enabled: true}}
 	p.Agents[0].ManageMCPConfig = true
 	p.Agents[0].MCPConfig = json.RawMessage(`{"servers":{}}`)
 	p.Agents[0].ManageCustomEnv = true
 	p.Agents[0].CustomEnv = map[string]string{"TOKEN": "x"}
-	p.Agents[0].ManageArchived = true
 	p.Agents[0].Archived = true
 	changes, err := (Reconciler{Backend: b}).Plan(p)
 	if err != nil {
@@ -151,14 +148,20 @@ func TestWorkspacePermissionIgnoresServerWorkspaceID(t *testing.T) {
 	}
 }
 
-func TestObservedOnlyAgentFieldRejectsApply(t *testing.T) {
+func TestObservedOnlyAgentFieldFailsPreflight(t *testing.T) {
 	b := existingBackend()
 	p := exampleProject(t)
-	p.Agents[0].ManageDisabledRuntimeSkills = true
 	p.Agents[0].DisabledRuntimeSkills = []model.DisabledRuntimeSkill{{Root: "universal", Key: "x"}}
-	err := (Reconciler{Backend: b}).Apply(p, func(model.Change) {})
+	controller := Reconciler{Backend: b}
+	if _, err := controller.Plan(p); err == nil {
+		t.Fatal("expected plan error")
+	}
+	err := controller.Apply(p, func(model.Change) {})
 	if err == nil {
-		t.Fatal("expected error")
+		t.Fatal("expected apply error")
+	}
+	if b.updatedSkill {
+		t.Fatal("apply mutated a skill before completing preflight")
 	}
 }
 func TestSquadApply(t *testing.T) {
@@ -172,7 +175,7 @@ func TestSquadApply(t *testing.T) {
 		t.Fatalf("added=%v", b.added)
 	}
 }
-func TestArchivedAgentIsRestoredForUpdateAndRearchivedWhenUnmanaged(t *testing.T) {
+func TestArchivedAgentIsRestoredToDeclaredActiveState(t *testing.T) {
 	b := existingBackend()
 	archived := "now"
 	b.agent.ArchivedAt = &archived
@@ -181,7 +184,7 @@ func TestArchivedAgentIsRestoredForUpdateAndRearchivedWhenUnmanaged(t *testing.T
 	if err := (Reconciler{Backend: b}).Apply(p, func(model.Change) {}); err != nil {
 		t.Fatal(err)
 	}
-	if !b.restored || !b.archived {
+	if !b.restored || b.archived {
 		t.Fatalf("restored=%v archived=%v", b.restored, b.archived)
 	}
 }
@@ -200,11 +203,11 @@ func TestApplySynchronizesSkillFiles(t *testing.T) {
 	}
 }
 func existingBackend() *fakeBackend {
-	return &fakeBackend{skills: []model.Skill{{ID: "skill-1", Name: "unity"}}, skill: model.Skill{ID: "skill-1", Name: "unity", Description: "old", Content: "old", Files: []model.SkillFile{{ID: "old", Path: "old.md", Content: "old"}}}, agents: []model.Agent{{ID: "agent-1", Name: "Unity Developer"}}, agent: model.Agent{ID: "agent-1", Name: "Unity Developer", RuntimeID: "runtime-1", PermissionMode: "private", MaxConcurrentTasks: 1}, runtimes: []model.Runtime{{ID: "runtime-1", Name: "desktop", Provider: "codex"}}, env: map[string]string{}}
+	return &fakeBackend{skills: []model.Skill{{ID: "skill-1", Name: "unity"}}, skill: model.Skill{ID: "skill-1", Name: "unity", Description: "old", Content: "old", Files: []model.SkillFile{{ID: "old", Path: "old.md", Content: "old"}}}, agents: []model.Agent{{ID: "agent-1", Name: "Unity Developer"}}, agent: model.Agent{ID: "agent-1", Name: "Unity Developer", RuntimeID: "runtime-1", RuntimeConfig: map[string]any{}, PermissionMode: "private", MaxConcurrentTasks: 1}, runtimes: []model.Runtime{{ID: "runtime-1", Name: "desktop", Provider: "codex"}}, env: map[string]string{}}
 }
 func exampleProject(t *testing.T) model.Project {
 	t.Helper()
 	content := filepath.Join(t.TempDir(), "SKILL.md")
 	os.WriteFile(content, []byte("new"), 0644)
-	return model.Project{RuntimeSelectors: map[string]model.RuntimeSelector{"desktop": {Name: "desktop", Provider: "codex"}}, Skills: []model.SkillSpec{{Name: "unity", Description: "new", Content: "new", ContentPath: content}}, Agents: []model.AgentSpec{{Name: "Unity Developer", Instructions: "work", ModelID: "model", Skills: []string{"unity"}, RuntimeRef: "desktop", MaxConcurrentTasks: 1, Permission: "private"}}}
+	return model.Project{RuntimeSelectors: map[string]model.RuntimeSelector{"desktop": {Name: "desktop", Provider: "codex"}}, Skills: []model.SkillSpec{{Name: "unity", Description: "new", Content: "new", ContentPath: content}}, Agents: []model.AgentSpec{{Name: "Unity Developer", Instructions: "work", ModelID: "model", SkillAssignments: []model.AgentSkillSpec{{Name: "unity", Enabled: true}}, RuntimeRef: "desktop", RuntimeConfig: map[string]any{}, MaxConcurrentTasks: 1, PermissionMode: "private"}}}
 }

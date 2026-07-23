@@ -16,10 +16,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const (
-	apiVersion = "multica-declarative/v1alpha1"
-	squadKind  = "Squad"
-)
+const apiVersion = "multica-declarative/v1alpha1"
 
 type workspaceDocument struct {
 	APIVersion string                     `yaml:"apiVersion"`
@@ -126,7 +123,6 @@ type agentMulticaDocument struct {
 }
 
 type squadDocument struct {
-	Kind             string                `yaml:"kind"`
 	Name             string                `yaml:"name"`
 	Description      string                `yaml:"description"`
 	Instructions     string                `yaml:"instructions"`
@@ -161,11 +157,14 @@ func Load(workspacePath string) (model.Project, error) {
 		return model.Project{}, fmt.Errorf("unsupported apiVersion %q; expected %q", doc.APIVersion, apiVersion)
 	}
 	base := filepath.Dir(absolute)
-	project := model.Project{WorkspacePath: absolute, RuntimeSelectors: map[string]model.RuntimeSelector{}}
+	project := model.Project{RuntimeSelectors: map[string]model.RuntimeSelector{}}
 	for alias, raw := range doc.Runtimes {
 		alias = strings.TrimSpace(alias)
 		if alias == "" {
 			return project, fmt.Errorf("runtime aliases must be non-empty strings")
+		}
+		if _, exists := project.RuntimeSelectors[alias]; exists {
+			return project, fmt.Errorf("duplicate runtime alias %q after whitespace normalization", alias)
 		}
 		v := model.RuntimeSelector{ID: strings.TrimSpace(raw.ID), Name: strings.TrimSpace(raw.Name), CustomName: strings.TrimSpace(raw.CustomName), Provider: strings.TrimSpace(raw.Provider)}
 		if v.ID == "" && v.Name == "" && v.CustomName == "" {
@@ -214,14 +213,14 @@ func Load(workspacePath string) (model.Project, error) {
 
 func discoverResourceDirectories(base, collection, marker string) ([]string, error) {
 	root := filepath.Join(base, collection)
-	info, err := os.Stat(root)
+	info, err := os.Lstat(root)
 	if os.IsNotExist(err) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("stat %s: %w", root, err)
 	}
-	if !info.IsDir() {
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
 		return nil, fmt.Errorf("%s resource root must be a directory: %s", collection, root)
 	}
 
@@ -240,12 +239,15 @@ func discoverResourceDirectories(base, collection, marker string) ([]string, err
 			return nil
 		}
 		markerPath := filepath.Join(current, marker)
-		info, statErr := os.Stat(markerPath)
+		info, statErr := os.Lstat(markerPath)
 		if statErr != nil {
 			if !os.IsNotExist(statErr) {
 				return fmt.Errorf("stat %s: %w", markerPath, statErr)
 			}
 			return nil
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("%s resource tree must not contain symlinks: %s", collection, markerPath)
 		}
 		if !info.Mode().IsRegular() {
 			return fmt.Errorf("%s must be a regular file", markerPath)
@@ -287,12 +289,11 @@ func loadAgent(path string) (model.AgentSpec, error) {
 	if err != nil {
 		return model.AgentSpec{}, err
 	}
-	permissionMode, targets, legacy, err := normalizePermission(d.Multica.Permission, path)
+	permissionMode, targets, err := normalizePermission(d.Multica.Permission, path)
 	if err != nil {
 		return model.AgentSpec{}, err
 	}
 	assignments := make([]model.AgentSkillSpec, 0, len(d.Skills))
-	skills := make([]string, 0, len(d.Skills))
 	seenSkills := map[string]struct{}{}
 	for _, raw := range d.Skills {
 		name := strings.TrimSpace(raw.Name)
@@ -308,9 +309,6 @@ func loadAgent(path string) (model.AgentSpec, error) {
 			enabled = *raw.Enabled
 		}
 		assignments = append(assignments, model.AgentSkillSpec{Name: name, Enabled: enabled})
-		if enabled {
-			skills = append(skills, name)
-		}
 	}
 	var customEnv map[string]string
 	var customEnvFile string
@@ -322,6 +320,9 @@ func loadAgent(path string) (model.AgentSpec, error) {
 		}
 		if err := readJSON(customEnvFile, &customEnv); err != nil {
 			return model.AgentSpec{}, fmt.Errorf("%s: customEnvFile: %w", path, err)
+		}
+		if customEnv == nil {
+			return model.AgentSpec{}, fmt.Errorf("%s: customEnvFile must contain a JSON object", path)
 		}
 	}
 	var mcp json.RawMessage
@@ -347,12 +348,7 @@ func loadAgent(path string) (model.AgentSpec, error) {
 		if err != nil {
 			return model.AgentSpec{}, err
 		}
-		info, statErr := os.Stat(avatarFile)
-		if statErr != nil || !info.Mode().IsRegular() {
-			return model.AgentSpec{}, fmt.Errorf("%s: avatarFile must be a regular file", path)
-		}
 	}
-	manageRuntimeConfig := d.Multica.RuntimeConfig != nil
 	runtimeConfig := d.Multica.RuntimeConfig
 	if runtimeConfig == nil {
 		runtimeConfig = map[string]any{}
@@ -372,23 +368,19 @@ func loadAgent(path string) (model.AgentSpec, error) {
 		return model.AgentSpec{}, err
 	}
 	archived := false
-	manageArchived := d.Multica.Archived != nil
-	if manageArchived {
+	if d.Multica.Archived != nil {
 		archived = *d.Multica.Archived
 	}
 	return model.AgentSpec{
 		Name: name, Description: strings.TrimSpace(d.Description), Instructions: instructions,
-		ModelID: strings.TrimSpace(d.Model.ID), Skills: skills, SkillAssignments: assignments,
-		RuntimeRef: runtime, ManageRuntimeConfig: manageRuntimeConfig, RuntimeConfig: runtimeConfig,
+		ModelID: strings.TrimSpace(d.Model.ID), SkillAssignments: assignments,
+		RuntimeRef: runtime, RuntimeConfig: runtimeConfig,
 		ThinkingLevel: strings.TrimSpace(d.Multica.ThinkingLevel), MaxConcurrentTasks: max,
-		Permission: legacy, PermissionMode: permissionMode, InvocationTargets: targets,
+		PermissionMode: permissionMode, InvocationTargets: targets,
 		CustomArgs: customArgs, ManageCustomEnv: manageEnv, CustomEnv: customEnv,
 		CustomEnvFile: customEnvFile, ManageMCPConfig: manageMCP, MCPConfig: mcp,
-		MCPConfigFile: mcpFile, AvatarFile: avatarFile, ManageArchived: manageArchived,
-		Archived: archived, ManageDisabledRuntimeSkills: d.Multica.DisabledRuntimeSkills != nil,
-		DisabledRuntimeSkills:          disabled,
-		ManageComposioToolkitAllowlist: d.Multica.ComposioToolkitAllowlist != nil,
-		ComposioToolkitAllowlist:       allowlist, SourcePath: path,
+		MCPConfigFile: mcpFile, AvatarFile: avatarFile, Archived: archived,
+		DisabledRuntimeSkills: disabled, ComposioToolkitAllowlist: allowlist,
 	}, nil
 }
 
@@ -396,13 +388,6 @@ func loadSquad(path string) (model.SquadSpec, error) {
 	var d squadDocument
 	if err := decodeStrictYAML(path, &d); err != nil {
 		return model.SquadSpec{}, err
-	}
-	kind := strings.TrimSpace(d.Kind)
-	if kind == "" {
-		kind = squadKind
-	}
-	if kind != squadKind {
-		return model.SquadSpec{}, fmt.Errorf("%s: unsupported squad kind %q", path, kind)
 	}
 	name := strings.TrimSpace(d.Name)
 	leader := strings.TrimSpace(d.Leader)
@@ -445,7 +430,7 @@ func loadSquad(path string) (model.SquadSpec, error) {
 		seenMembers[memberKey] = struct{}{}
 		members = append(members, v)
 	}
-	return model.SquadSpec{Name: name, Description: strings.TrimSpace(d.Description), Instructions: instructions, Leader: leader, AvatarURL: strings.TrimSpace(d.AvatarURL), Members: members, SourcePath: path, InstructionsFile: d.InstructionsFile}, nil
+	return model.SquadSpec{Name: name, Description: strings.TrimSpace(d.Description), Instructions: instructions, Leader: leader, AvatarURL: strings.TrimSpace(d.AvatarURL), Members: members}, nil
 }
 
 func loadSkill(directory string) (model.SkillSpec, error) {
@@ -466,7 +451,7 @@ func loadSkill(directory string) (model.SkillSpec, error) {
 	if fm.Name == "" || fm.Description == "" {
 		return model.SkillSpec{}, fmt.Errorf("%s: frontmatter name and description are required", contentPath)
 	}
-	skill := model.SkillSpec{Name: fm.Name, Description: fm.Description, Content: string(data), SourceDir: directory, ContentPath: contentPath}
+	skill := model.SkillSpec{Name: fm.Name, Description: fm.Description, Content: string(data), ContentPath: contentPath}
 	err = filepath.WalkDir(directory, func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -544,29 +529,26 @@ func validate(p model.Project) error {
 	return nil
 }
 
-func normalizePermission(p permissionDocument, path string) (string, []model.InvocationTarget, string, error) {
+func normalizePermission(p permissionDocument, path string) (string, []model.InvocationTarget, error) {
 	mode := strings.TrimSpace(p.Mode)
 	if mode == "" {
 		mode = "private"
 	}
 	if len(p.Teams) > 0 {
-		return "", nil, "", fmt.Errorf("%s: team invocation targets are not supported by the Multica CLI", path)
+		return "", nil, fmt.Errorf("%s: team invocation targets are not supported by the Multica CLI", path)
 	}
 	members, err := normalizeStringList(p.Members, path+": permission.members")
 	if err != nil {
-		return "", nil, "", err
-	}
-	if duplicate := duplicateString(members); duplicate != "" {
-		return "", nil, "", fmt.Errorf("%s: duplicate permission member %q", path, duplicate)
+		return "", nil, err
 	}
 	if mode == "private" {
 		if p.Workspace || len(members) > 0 {
-			return "", nil, "", fmt.Errorf("%s: private permission cannot have targets", path)
+			return "", nil, fmt.Errorf("%s: private permission cannot have targets", path)
 		}
-		return "private", nil, "private", nil
+		return "private", nil, nil
 	}
 	if mode != "public_to" {
-		return "", nil, "", fmt.Errorf("%s: permission.mode must be private or public_to", path)
+		return "", nil, fmt.Errorf("%s: permission.mode must be private or public_to", path)
 	}
 	targets := []model.InvocationTarget{}
 	if p.Workspace {
@@ -577,13 +559,9 @@ func normalizePermission(p permissionDocument, path string) (string, []model.Inv
 		targets = append(targets, model.InvocationTarget{TargetType: "member", TargetID: &idCopy})
 	}
 	if len(targets) == 0 {
-		return "", nil, "", fmt.Errorf("%s: public_to permission needs workspace or members", path)
+		return "", nil, fmt.Errorf("%s: public_to permission needs workspace or members", path)
 	}
-	legacy := ""
-	if p.Workspace && len(members) == 0 {
-		legacy = "workspace"
-	}
-	return mode, targets, legacy, nil
+	return mode, targets, nil
 }
 
 func loadTextChoice(path, inline, file, label string) (string, error) {
@@ -657,17 +635,6 @@ func requireMappingKeys(node *yaml.Node, allowed ...string) error {
 	return nil
 }
 
-func duplicateString(values []string) string {
-	seen := map[string]struct{}{}
-	for _, value := range values {
-		if _, ok := seen[value]; ok {
-			return value
-		}
-		seen[value] = struct{}{}
-	}
-	return ""
-}
-
 func decodeStrictYAML(path string, target any) error {
 	f, err := os.Open(path)
 	if err != nil {
@@ -679,6 +646,13 @@ func decodeStrictYAML(path string, target any) error {
 	if err := d.Decode(target); err != nil {
 		return fmt.Errorf("parse %s: %w", path, err)
 	}
+	var extra yaml.Node
+	if err := d.Decode(&extra); err != io.EOF {
+		if err != nil {
+			return fmt.Errorf("parse %s: %w", path, err)
+		}
+		return fmt.Errorf("parse %s: multiple YAML documents", path)
+	}
 	return nil
 }
 func resolvePath(base, value string) (string, error) {
@@ -686,11 +660,40 @@ func resolvePath(base, value string) (string, error) {
 	if value == "" {
 		return "", fmt.Errorf("path must be non-empty")
 	}
-	p := filepath.Clean(value)
-	if !filepath.IsAbs(p) {
-		p = filepath.Join(base, p)
+	if filepath.IsAbs(value) {
+		return "", fmt.Errorf("resource file path must be relative: %s", value)
 	}
-	return filepath.Abs(p)
+	base, err := filepath.Abs(base)
+	if err != nil {
+		return "", err
+	}
+	p := filepath.Clean(filepath.Join(base, value))
+	relative, err := filepath.Rel(base, p)
+	if err != nil {
+		return "", err
+	}
+	if relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("resource file path escapes its declaration directory: %s", value)
+	}
+	current := base
+	parts := strings.Split(relative, string(filepath.Separator))
+	for index, part := range parts {
+		current = filepath.Join(current, part)
+		info, statErr := os.Lstat(current)
+		if statErr != nil {
+			return "", statErr
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return "", fmt.Errorf("resource file path must not contain symlinks: %s", current)
+		}
+		if index < len(parts)-1 && !info.IsDir() {
+			return "", fmt.Errorf("resource file parent must be a directory: %s", current)
+		}
+		if index == len(parts)-1 && !info.Mode().IsRegular() {
+			return "", fmt.Errorf("resource file must be a regular file: %s", current)
+		}
+	}
+	return p, nil
 }
 func normalizeStringList(items []string, label string) ([]string, error) {
 	out := make([]string, 0, len(items))

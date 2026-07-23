@@ -2,6 +2,7 @@ package exporter
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -11,43 +12,55 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-func preserveAgentDirectories(target string, agents []exportedAgent) error {
-	existing, err := existingAgentDirectories(target)
+func preserveSnapshotDirectories(target string, snapshot *snapshot) error {
+	if err := preserveResourceDirectories(target, "skills", "SKILL.md", snapshot.skills,
+		func(skill *exportedSkill) (string, *string) { return skill.name, &skill.directory }, skillName); err != nil {
+		return err
+	}
+	if err := preserveResourceDirectories(target, "agents", "agent.yaml", snapshot.agents,
+		func(agent *exportedAgent) (string, *string) { return agent.document.Name, &agent.directory }, yamlName); err != nil {
+		return err
+	}
+	return preserveResourceDirectories(target, "squads", "squad.yaml", snapshot.squads,
+		func(squad *exportedSquad) (string, *string) { return squad.document.Name, &squad.directory }, yamlName)
+}
+
+func preserveResourceDirectories[T any](target, collection, marker string, resources []T, location func(*T) (string, *string), parseName func([]byte) (string, error)) error {
+	existing, err := existingResourceDirectories(target, collection, marker, parseName)
 	if err != nil {
 		return err
 	}
-	for i := range agents {
-		if directory, ok := existing[agents[i].document.Name]; ok {
-			agents[i].directory = directory
-		}
-	}
-
 	used := map[string]string{}
-	for _, agent := range agents {
-		directory := filepath.Clean(agent.directory)
-		if directory == "." || filepath.IsAbs(directory) || directory == ".." || strings.HasPrefix(directory, ".."+string(filepath.Separator)) {
-			return fmt.Errorf("unsafe export directory %q for agent %q", agent.directory, agent.document.Name)
+	for index := range resources {
+		name, directory := location(&resources[index])
+		if existingDirectory, ok := existing[name]; ok {
+			*directory = existingDirectory
 		}
-		if previous, ok := used[directory]; ok {
-			return fmt.Errorf("agents %q and %q would export to the same directory %s", previous, agent.document.Name, filepath.Join("agents", directory))
+		clean := filepath.Clean(*directory)
+		if clean == "." || filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+			return fmt.Errorf("unsafe export directory %q for %s %q", *directory, collection, name)
 		}
-		used[directory] = agent.document.Name
+		if previous, ok := used[clean]; ok {
+			return fmt.Errorf("%s %q and %q would export to the same directory %s", collection, previous, name, filepath.Join(collection, clean))
+		}
+		*directory = clean
+		used[clean] = name
 	}
 	return nil
 }
 
-func existingAgentDirectories(target string) (map[string]string, error) {
+func existingResourceDirectories(target, collection, marker string, parseName func([]byte) (string, error)) (map[string]string, error) {
 	directories := map[string]string{}
-	root := filepath.Join(target, "agents")
+	root := filepath.Join(target, collection)
 	info, err := os.Lstat(root)
 	if os.IsNotExist(err) {
 		return directories, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("stat existing agents directory: %w", err)
+		return nil, fmt.Errorf("stat existing %s directory: %w", collection, err)
 	}
 	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
-		return nil, fmt.Errorf("existing agents path must be a directory: %s", root)
+		return nil, fmt.Errorf("existing %s path must be a directory: %s", collection, root)
 	}
 
 	err = filepath.WalkDir(root, func(current string, entry fs.DirEntry, walkErr error) error {
@@ -58,52 +71,69 @@ func existingAgentDirectories(target string) (map[string]string, error) {
 			return nil
 		}
 		if entry.Type()&os.ModeSymlink != 0 {
-			return fmt.Errorf("existing agents tree must not contain symlinks: %s", current)
+			return fmt.Errorf("existing %s tree must not contain symlinks: %s", collection, current)
 		}
 		if !entry.IsDir() {
 			return nil
 		}
 
-		declaration := filepath.Join(current, "agent.yaml")
+		declaration := filepath.Join(current, marker)
 		declarationInfo, statErr := os.Lstat(declaration)
 		if statErr != nil {
 			if os.IsNotExist(statErr) {
 				return nil
 			}
-			return fmt.Errorf("stat existing agent declaration %s: %w", declaration, statErr)
+			return fmt.Errorf("stat existing %s declaration %s: %w", collection, declaration, statErr)
 		}
 		if !declarationInfo.Mode().IsRegular() {
-			return fmt.Errorf("existing agent declaration must be a regular file: %s", declaration)
+			return fmt.Errorf("existing %s declaration must be a regular file: %s", collection, declaration)
 		}
 
 		data, readErr := os.ReadFile(declaration)
 		if readErr != nil {
-			return fmt.Errorf("read existing agent declaration %s: %w", declaration, readErr)
+			return fmt.Errorf("read existing %s declaration %s: %w", collection, declaration, readErr)
 		}
-		var identity struct {
-			Name string `yaml:"name"`
+		name, parseErr := parseName(data)
+		if parseErr != nil {
+			return fmt.Errorf("parse existing %s declaration %s: %w", collection, declaration, parseErr)
 		}
-		if decodeErr := yaml.Unmarshal(data, &identity); decodeErr != nil {
-			return fmt.Errorf("parse existing agent declaration %s: %w", declaration, decodeErr)
-		}
-		identity.Name = strings.TrimSpace(identity.Name)
-		if identity.Name == "" {
-			return fmt.Errorf("existing agent declaration %s must contain name", declaration)
+		name = strings.TrimSpace(name)
+		if name == "" {
+			return fmt.Errorf("existing %s declaration %s must contain name", collection, declaration)
 		}
 		relative, relErr := filepath.Rel(root, current)
 		if relErr != nil {
-			return fmt.Errorf("resolve existing agent directory %s: %w", current, relErr)
+			return fmt.Errorf("resolve existing %s directory %s: %w", collection, current, relErr)
 		}
-		if previous, ok := directories[identity.Name]; ok {
-			return fmt.Errorf("duplicate existing agent name %q in %s and %s", identity.Name, filepath.Join(root, previous), current)
+		if previous, ok := directories[name]; ok {
+			return fmt.Errorf("duplicate existing %s name %q in %s and %s", collection, name, filepath.Join(root, previous), current)
 		}
-		directories[identity.Name] = relative
+		directories[name] = relative
 		return filepath.SkipDir
 	})
 	if err != nil {
 		return nil, err
 	}
 	return directories, nil
+}
+
+func yamlName(data []byte) (string, error) {
+	var identity struct {
+		Name string `yaml:"name"`
+	}
+	if err := yaml.Unmarshal(data, &identity); err != nil {
+		return "", err
+	}
+	return identity.Name, nil
+}
+
+func skillName(data []byte) (string, error) {
+	_, frontmatter, valid := splitFrontmatter(string(data))
+	if !valid {
+		return "", fmt.Errorf("SKILL.md has invalid frontmatter")
+	}
+	name, _ := frontmatter["name"].(string)
+	return name, nil
 }
 
 func writeSnapshot(root string, v snapshot) error {
@@ -235,28 +265,54 @@ func installSnapshot(staging, target string, force bool) error {
 	if err != nil {
 		return err
 	}
-	if len(entries) == 0 {
-		if err := os.Remove(target); err != nil {
-			return err
-		}
-		return os.Rename(staging, target)
-	}
-	if !force {
+	if len(entries) > 0 && !force {
 		return fmt.Errorf("output directory is not empty")
 	}
-	for _, name := range generatedPaths {
-		if err := os.RemoveAll(filepath.Join(target, name)); err != nil {
-			return err
+	backup, err := os.MkdirTemp(filepath.Dir(target), ".multica-backup-*")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(backup)
+
+	moved := []string{}
+	installed := []string{}
+	rollback := func(cause error) error {
+		errorsSeen := []error{cause}
+		for index := len(installed) - 1; index >= 0; index-- {
+			if removeErr := os.RemoveAll(filepath.Join(target, installed[index])); removeErr != nil {
+				errorsSeen = append(errorsSeen, fmt.Errorf("remove partially installed %s: %w", installed[index], removeErr))
+			}
 		}
+		for index := len(moved) - 1; index >= 0; index-- {
+			name := moved[index]
+			if restoreErr := os.Rename(filepath.Join(backup, name), filepath.Join(target, name)); restoreErr != nil {
+				errorsSeen = append(errorsSeen, fmt.Errorf("restore previous %s: %w", name, restoreErr))
+			}
+		}
+		return errors.Join(errorsSeen...)
+	}
+
+	for _, name := range generatedPaths {
+		destination := filepath.Join(target, name)
+		if _, statErr := os.Lstat(destination); os.IsNotExist(statErr) {
+			continue
+		} else if statErr != nil {
+			return rollback(statErr)
+		}
+		if err := os.Rename(destination, filepath.Join(backup, name)); err != nil {
+			return rollback(fmt.Errorf("back up existing %s: %w", name, err))
+		}
+		moved = append(moved, name)
 	}
 	for _, name := range generatedPaths {
 		source := filepath.Join(staging, name)
-		if _, err := os.Stat(source); os.IsNotExist(err) {
-			continue
+		if _, statErr := os.Lstat(source); statErr != nil {
+			return rollback(fmt.Errorf("stat generated %s: %w", name, statErr))
 		}
 		if err := os.Rename(source, filepath.Join(target, name)); err != nil {
-			return err
+			return rollback(fmt.Errorf("install generated %s: %w", name, err))
 		}
+		installed = append(installed, name)
 	}
 	return nil
 }

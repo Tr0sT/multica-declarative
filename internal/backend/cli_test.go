@@ -27,7 +27,7 @@ func (r *fakeRunner) Run(_ context.Context, name string, args ...string) ([]byte
 func TestUpdateAgentPassesClearableFields(t *testing.T) {
 	runner := &fakeRunner{stdout: []byte(`{"id":"agent-1","name":"Agent"}`)}
 	c := &CLI{Binary: "multica-test", Runner: runner}
-	_, err := c.UpdateAgent("agent-1", model.AgentInput{Name: "Agent", RuntimeID: "runtime-1", ManageRuntimeConfig: true, Permission: "private", MaxConcurrentTasks: 1})
+	_, err := c.UpdateAgent("agent-1", model.AgentInput{Name: "Agent", RuntimeID: "runtime-1", PermissionMode: "private", MaxConcurrentTasks: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,7 +41,7 @@ func TestUpdateAgentPassesClearableFields(t *testing.T) {
 func TestCreateWorkspaceAgentUsesPublicTarget(t *testing.T) {
 	runner := &fakeRunner{stdout: []byte(`{"id":"a","name":"Agent"}`)}
 	c := &CLI{Runner: runner}
-	_, err := c.CreateAgent(model.AgentInput{Name: "Agent", RuntimeID: "r", Permission: "workspace", MaxConcurrentTasks: 2})
+	_, err := c.CreateAgent(model.AgentInput{Name: "Agent", RuntimeID: "r", PermissionMode: "public_to", InvocationTargets: []model.InvocationTarget{{TargetType: "workspace"}}, MaxConcurrentTasks: 2})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,7 +53,7 @@ func TestCreateAgentUsesMemberTargetsAndFiles(t *testing.T) {
 	id := "member-1"
 	runner := &fakeRunner{stdout: []byte(`{"id":"a","name":"Agent"}`)}
 	c := &CLI{Runner: runner}
-	_, err := c.CreateAgent(model.AgentInput{Name: "Agent", RuntimeID: "r", ManageRuntimeConfig: true, RuntimeConfig: map[string]any{"x": true}, PermissionMode: "public_to", InvocationTargets: []model.InvocationTarget{{TargetType: "member", TargetID: &id}}, ManageMCPConfig: true, MCPConfigFile: "mcp.json", MaxConcurrentTasks: 1})
+	_, err := c.CreateAgent(model.AgentInput{Name: "Agent", RuntimeID: "r", RuntimeConfig: map[string]any{"x": true}, PermissionMode: "public_to", InvocationTargets: []model.InvocationTarget{{TargetType: "member", TargetID: &id}}, ManageMCPConfig: true, MCPConfigFile: "mcp.json", MaxConcurrentTasks: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,5 +90,32 @@ func TestRunnerErrorIncludesStderr(t *testing.T) {
 	_, err := c.ListSkills()
 	if err == nil || !strings.Contains(err.Error(), "authentication failed") {
 		t.Fatal(err)
+	}
+}
+
+func TestRunnerErrorRedactsSensitiveArguments(t *testing.T) {
+	customArgs := `["token=custom-secret"]`
+	runtimeConfig := `{"token":"runtime-secret"}`
+	runner := &fakeRunner{
+		stderr: []byte("command failed for " + customArgs + ", " + runtimeConfig + ", and file-secret"),
+		err:    errors.New("exit while handling " + runtimeConfig + " and file-secret"),
+	}
+	c := &CLI{Runner: runner}
+	_, err := c.CreateAgent(model.AgentInput{
+		Name: "Agent", RuntimeID: "runtime-1", PermissionMode: "private", MaxConcurrentTasks: 1,
+		CustomArgs: []string{"token=custom-secret"}, RuntimeConfig: map[string]any{"token": "runtime-secret"},
+		ManageMCPConfig: true, MCPConfigFile: "mcp.json",
+	})
+	if err == nil {
+		t.Fatal("expected command error")
+	}
+	message := err.Error()
+	for _, secret := range []string{"custom-secret", "runtime-secret", "file-secret"} {
+		if strings.Contains(message, secret) {
+			t.Fatalf("error leaked %q: %s", secret, message)
+		}
+	}
+	if !strings.Contains(message, "<redacted>") {
+		t.Fatalf("error did not identify redaction: %s", message)
 	}
 }

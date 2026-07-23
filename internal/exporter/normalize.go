@@ -241,9 +241,3 @@ func duplicateName[T any](items []T, name func(T) string) string {
 	}
 	return ""
 }
-func defaultString(v, def string) string {
-	if strings.TrimSpace(v) == "" {
-		return def
-	}
-	return v
-}

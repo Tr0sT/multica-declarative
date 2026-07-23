@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Tr0sT/multica-declarative/internal/backend"
+	"github.com/Tr0sT/multica-declarative/internal/config"
 	"github.com/Tr0sT/multica-declarative/internal/model"
 )
 
@@ -46,8 +47,8 @@ type snapshot struct {
 	warnings []string
 }
 type exportedSkill struct {
-	directory, content string
-	files              []model.SkillFile
+	name, directory, content string
+	files                    []model.SkillFile
 }
 type exportedAgent struct {
 	directory, instructions string
@@ -106,7 +107,6 @@ type multicaDocument struct {
 	ComposioToolkitAllowlist []string                     `yaml:"composioToolkitAllowlist,omitempty"`
 }
 type squadDocument struct {
-	Kind             string                `yaml:"kind"`
 	Name             string                `yaml:"name"`
 	Description      string                `yaml:"description,omitempty"`
 	InstructionsFile string                `yaml:"instructionsFile,omitempty"`
@@ -146,9 +146,9 @@ func (e Exporter) Export(options Options) (Result, error) {
 		return Result{}, err
 	}
 	if len(snap.skills)+len(snap.agents)+len(snap.squads) == 0 {
-		return Result{}, fmt.Errorf("Multica workspace contains no exportable resources")
+		return Result{}, fmt.Errorf("multica workspace contains no exportable resources")
 	}
-	if err := preserveAgentDirectories(absolute, snap.agents); err != nil {
+	if err := preserveSnapshotDirectories(absolute, &snap); err != nil {
 		return Result{}, err
 	}
 	parent := filepath.Dir(absolute)
@@ -162,6 +162,9 @@ func (e Exporter) Export(options Options) (Result, error) {
 	defer os.RemoveAll(staging)
 	if err := writeSnapshot(staging, snap); err != nil {
 		return Result{}, err
+	}
+	if _, err := config.Load(filepath.Join(staging, "multica.yaml")); err != nil {
+		return Result{}, fmt.Errorf("validate generated snapshot: %w", err)
 	}
 	if err := installSnapshot(staging, absolute, options.Force); err != nil {
 		return Result{}, err
@@ -199,6 +202,15 @@ func (e Exporter) readSnapshot() (snapshot, error) {
 		if err != nil {
 			return snapshot{}, err
 		}
+		if v.ID == "" {
+			v.ID = s.ID
+		}
+		if v.Name == "" {
+			v.Name = s.Name
+		}
+		if v.ID == "" {
+			return snapshot{}, fmt.Errorf("skill %q has no id", v.Name)
+		}
 		content, changed, err := normalizeSkillContent(v)
 		if err != nil {
 			return snapshot{}, err
@@ -211,7 +223,7 @@ func (e Exporter) readSnapshot() (snapshot, error) {
 			return snapshot{}, err
 		}
 		dir := uniqueSlug(v.Name, v.ID, usedSkills)
-		skills = append(skills, exportedSkill{directory: dir, content: content, files: files})
+		skills = append(skills, exportedSkill{name: v.Name, directory: dir, content: content, files: files})
 		skillNames[v.Name] = struct{}{}
 	}
 	detailed := []model.Agent{}
@@ -224,6 +236,12 @@ func (e Exporter) readSnapshot() (snapshot, error) {
 		}
 		if a.Name == "" {
 			a.Name = s.Name
+		}
+		if a.ID == "" {
+			a.ID = s.ID
+		}
+		if a.ID == "" {
+			return snapshot{}, fmt.Errorf("agent %q has no id", a.Name)
 		}
 		assigned, err := e.Backend.ListAgentSkills(a.ID)
 		if err != nil {
@@ -326,6 +344,15 @@ func (e Exporter) readSnapshot() (snapshot, error) {
 			if err != nil {
 				return snapshot{}, err
 			}
+			if s.ID == "" {
+				s.ID = summary.ID
+			}
+			if s.Name == "" {
+				s.Name = summary.Name
+			}
+			if s.ID == "" {
+				return snapshot{}, fmt.Errorf("squad %q has no id", s.Name)
+			}
 			leader := agentNameByID[s.LeaderID]
 			if leader == "" {
 				return snapshot{}, fmt.Errorf("squad %q leader %q is not an exported agent", s.Name, s.LeaderID)
@@ -358,7 +385,7 @@ func (e Exporter) readSnapshot() (snapshot, error) {
 			if s.AvatarURL != nil {
 				avatar = *s.AvatarURL
 			}
-			sq := exportedSquad{directory: dir, instructions: s.Instructions, document: squadDocument{Kind: "Squad", Name: s.Name, Description: s.Description, Leader: leader, AvatarURL: avatar, Members: docs}}
+			sq := exportedSquad{directory: dir, instructions: s.Instructions, document: squadDocument{Name: s.Name, Description: s.Description, Leader: leader, AvatarURL: avatar, Members: docs}}
 			if s.Instructions != "" {
 				sq.document.InstructionsFile = "SQUAD.md"
 			}
