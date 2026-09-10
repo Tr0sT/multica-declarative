@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -408,6 +409,18 @@ func (r Reconciler) diffAgent(d model.AgentSpec, runtimeID string, a model.Agent
 	if d.ModelID != a.Model {
 		fields = append(fields, "model")
 	}
+	if model.HasMaskedGatewayToken(a.RuntimeConfig) {
+		return nil, fmt.Errorf("agent %q runtime gateway token is masked and cannot be compared faithfully", d.Name)
+	}
+	if d.ServiceTier != nil && *d.ServiceTier != a.ServiceTier {
+		fields = append(fields, "serviceTier")
+	}
+	if d.ConversationStarters != nil && !slices.Equal(*d.ConversationStarters, a.ConversationStarters) {
+		fields = append(fields, "conversationStarters")
+	}
+	if d.SystemKey != nil && *d.SystemKey != a.SystemKey {
+		fields = append(fields, "systemKey")
+	}
 	if d.ThinkingLevel != a.ThinkingLevel {
 		fields = append(fields, "thinkingLevel")
 	}
@@ -608,6 +621,15 @@ func squadMembersMatch(d model.SquadSpec, actual []model.SquadMember, agents map
 }
 
 func validateObservedOnlyOnCreate(d model.AgentSpec) error {
+	if d.Unbound {
+		return fmt.Errorf("agent %q is unbound; choose a runtime before creating it through the official CLI", d.Name)
+	}
+	if d.SystemKey != nil && *d.SystemKey != "" {
+		return fmt.Errorf("agent %q has a systemKey; product-managed agents cannot be created through the official CLI", d.Name)
+	}
+	if d.ConversationStarters != nil && len(*d.ConversationStarters) > 0 {
+		return fmt.Errorf("agent %q conversationStarters can be observed, but not created through the official CLI", d.Name)
+	}
 	disabled := false
 	for _, s := range d.SkillAssignments {
 		if !s.Enabled {
@@ -625,6 +647,15 @@ func validateObservedOnlyOnCreate(d model.AgentSpec) error {
 	return nil
 }
 func validateObservedOnlyChanges(d model.AgentSpec, a model.Agent, skills []model.SkillSummary) error {
+	if d.Unbound && a.RuntimeID != "" {
+		return fmt.Errorf("agent %q cannot be made unbound through the official CLI", d.Name)
+	}
+	if d.SystemKey != nil && *d.SystemKey != a.SystemKey {
+		return fmt.Errorf("agent %q systemKey cannot be changed through the official CLI", d.Name)
+	}
+	if d.ConversationStarters != nil && !slices.Equal(*d.ConversationStarters, a.ConversationStarters) {
+		return fmt.Errorf("agent %q conversationStarters cannot be changed through the official CLI", d.Name)
+	}
 	if !equalSkillAssignments(d.SkillAssignments, skills) {
 		for _, s := range d.SkillAssignments {
 			if !s.Enabled {
@@ -843,8 +874,8 @@ func skillInput(v model.SkillSpec) model.SkillInput {
 func agentInput(v model.AgentSpec, runtimeID string) model.AgentInput {
 	return model.AgentInput{
 		Name: v.Name, Description: v.Description, Instructions: v.Instructions, RuntimeID: runtimeID,
-		RuntimeConfig: v.RuntimeConfig,
-		Model:         v.ModelID, ThinkingLevel: v.ThinkingLevel, CustomArgs: append([]string(nil), v.CustomArgs...),
+		RuntimeConfig: v.RuntimeConfig, ServiceTier: v.ServiceTier,
+		Model: v.ModelID, ThinkingLevel: v.ThinkingLevel, CustomArgs: append([]string(nil), v.CustomArgs...),
 		PermissionMode:     v.PermissionMode,
 		InvocationTargets:  append([]model.InvocationTarget(nil), v.InvocationTargets...),
 		MaxConcurrentTasks: v.MaxConcurrentTasks, ManageMCPConfig: v.ManageMCPConfig, MCPConfigFile: v.MCPConfigFile,
@@ -956,7 +987,7 @@ func baseAgentFields(v []string) []string {
 	out := []string{}
 	for _, f := range v {
 		switch f {
-		case "description", "instructions", "runtime", "runtimeConfig", "model", "thinkingLevel", "maxConcurrentTasks", "customArgs", "permission", "mcpConfig":
+		case "description", "instructions", "runtime", "runtimeConfig", "model", "thinkingLevel", "serviceTier", "maxConcurrentTasks", "customArgs", "permission", "mcpConfig":
 			out = append(out, f)
 		}
 	}

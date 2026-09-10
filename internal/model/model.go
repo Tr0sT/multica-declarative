@@ -43,6 +43,11 @@ type DisabledRuntimeSkill struct {
 	Plugin    string `json:"plugin,omitempty" yaml:"plugin,omitempty"`
 }
 
+type ConversationStarter struct {
+	Label  string `json:"label" yaml:"label"`
+	Prompt string `json:"prompt" yaml:"prompt"`
+}
+
 type AgentSpec struct {
 	Name                     string
 	Description              string
@@ -50,6 +55,10 @@ type AgentSpec struct {
 	ModelID                  string
 	SkillAssignments         []AgentSkillSpec
 	RuntimeRef               string
+	Unbound                  bool
+	ServiceTier              *string
+	ConversationStarters     *[]ConversationStarter
+	SystemKey                *string
 	RuntimeConfig            map[string]any
 	ThinkingLevel            string
 	MaxConcurrentTasks       int
@@ -112,6 +121,9 @@ type SkillSummary struct {
 }
 
 type Agent struct {
+	ServiceTier                      string                 `json:"service_tier"`
+	ConversationStarters             []ConversationStarter  `json:"conversation_starters"`
+	SystemKey                        string                 `json:"system_key"`
 	ID                               string                 `json:"id"`
 	Name                             string                 `json:"name"`
 	Description                      string                 `json:"description"`
@@ -171,6 +183,7 @@ type SkillFileInput struct {
 }
 
 type AgentInput struct {
+	ServiceTier        *string
 	Name               string
 	Description        string
 	Instructions       string
@@ -199,4 +212,20 @@ type Change struct {
 	Kind   string
 	Name   string
 	Fields []string
+}
+
+// HasMaskedGatewayToken detects Multica's write-only OpenClaw gateway credential.
+// Saving or comparing the response placeholder as if it were a credential is lossy.
+func HasMaskedGatewayToken(config map[string]any) bool {
+	gateway, ok := config["gateway"].(map[string]any)
+	if !ok {
+		return false
+	}
+	return gateway["token"] == "***"
+}
+
+type WorkspaceMCPServer struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Transport string `json:"transport"`
 }

@@ -108,6 +108,10 @@ type agentDocument struct {
 	Multica          agentMulticaDocument     `yaml:"multica"`
 }
 type agentMulticaDocument struct {
+	Unbound                  bool                         `yaml:"unbound"`
+	ServiceTier              *string                      `yaml:"serviceTier"`
+	ConversationStarters     *[]model.ConversationStarter `yaml:"conversationStarters"`
+	SystemKey                *string                      `yaml:"systemKey"`
 	Runtime                  string                       `yaml:"runtime"`
 	RuntimeConfig            map[string]any               `yaml:"runtimeConfig"`
 	ThinkingLevel            string                       `yaml:"thinkingLevel"`
@@ -275,8 +279,14 @@ func loadAgent(path string) (model.AgentSpec, error) {
 		return model.AgentSpec{}, err
 	}
 	runtime := strings.TrimSpace(d.Multica.Runtime)
-	if runtime == "" {
-		return model.AgentSpec{}, fmt.Errorf("%s: multica.runtime is required", path)
+	if runtime == "" && !d.Multica.Unbound {
+		return model.AgentSpec{}, fmt.Errorf("%s: multica.runtime is required unless multica.unbound is true", path)
+	}
+	if runtime != "" && d.Multica.Unbound {
+		return model.AgentSpec{}, fmt.Errorf("%s: multica.runtime and multica.unbound are mutually exclusive", path)
+	}
+	if err := validateConversationStarters(d.Multica.ConversationStarters); err != nil {
+		return model.AgentSpec{}, fmt.Errorf("%s: %w", path, err)
 	}
 	max := d.Multica.MaxConcurrentTasks
 	if max == 0 {
@@ -337,8 +347,8 @@ func loadAgent(path string) (model.AgentSpec, error) {
 		if readErr != nil {
 			return model.AgentSpec{}, readErr
 		}
-		if !json.Valid(data) {
-			return model.AgentSpec{}, fmt.Errorf("%s: mcpConfigFile must contain valid JSON", path)
+		if !json.Valid(data) || (bytes.TrimSpace(data)[0] != '{' && !bytes.Equal(bytes.TrimSpace(data), []byte("null"))) {
+			return model.AgentSpec{}, fmt.Errorf("%s: mcpConfigFile must contain a JSON object or null", path)
 		}
 		mcp = append([]byte(nil), data...)
 	}
@@ -374,7 +384,8 @@ func loadAgent(path string) (model.AgentSpec, error) {
 	return model.AgentSpec{
 		Name: name, Description: strings.TrimSpace(d.Description), Instructions: instructions,
 		ModelID: strings.TrimSpace(d.Model.ID), SkillAssignments: assignments,
-		RuntimeRef: runtime, RuntimeConfig: runtimeConfig,
+		RuntimeRef: runtime, RuntimeConfig: runtimeConfig, Unbound: d.Multica.Unbound,
+		ServiceTier: d.Multica.ServiceTier, ConversationStarters: d.Multica.ConversationStarters, SystemKey: d.Multica.SystemKey,
 		ThinkingLevel: strings.TrimSpace(d.Multica.ThinkingLevel), MaxConcurrentTasks: max,
 		PermissionMode: permissionMode, InvocationTargets: targets,
 		CustomArgs: customArgs, ManageCustomEnv: manageEnv, CustomEnv: customEnv,
@@ -382,6 +393,24 @@ func loadAgent(path string) (model.AgentSpec, error) {
 		MCPConfigFile: mcpFile, AvatarFile: avatarFile, Archived: archived,
 		DisabledRuntimeSkills: disabled, ComposioToolkitAllowlist: allowlist,
 	}, nil
+}
+
+func validateConversationStarters(starters *[]model.ConversationStarter) error {
+	if starters == nil {
+		return nil
+	}
+	if len(*starters) > 3 {
+		return fmt.Errorf("conversationStarters must contain at most 3 items")
+	}
+	for i, starter := range *starters {
+		if strings.TrimSpace(starter.Label) == "" || strings.TrimSpace(starter.Prompt) == "" {
+			return fmt.Errorf("conversationStarters[%d] requires label and prompt", i)
+		}
+		if utf8.RuneCountInString(starter.Label) > 80 || utf8.RuneCountInString(starter.Prompt) > 4000 {
+			return fmt.Errorf("conversationStarters[%d] exceeds the 80-character label or 4000-character prompt limit", i)
+		}
+	}
+	return nil
 }
 
 func loadSquad(path string) (model.SquadSpec, error) {
@@ -500,7 +529,7 @@ func validate(p model.Project) error {
 			return fmt.Errorf("duplicate agent name %q", v.Name)
 		}
 		agents[v.Name] = struct{}{}
-		if _, ok := p.RuntimeSelectors[v.RuntimeRef]; !ok {
+		if _, ok := p.RuntimeSelectors[v.RuntimeRef]; !ok && !v.Unbound {
 			return fmt.Errorf("agent %q references unknown runtime %q", v.Name, v.RuntimeRef)
 		}
 		for _, s := range v.SkillAssignments {

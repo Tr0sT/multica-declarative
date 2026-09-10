@@ -14,7 +14,7 @@ import (
 	"github.com/Tr0sT/multica-declarative/internal/reconcile"
 )
 
-var Version = "0.4.0-dev"
+var Version = "0.5.0-dev"
 
 func Run(args []string, stdout, stderr io.Writer) int {
 	command, flagArgs, err := splitCommand(args)

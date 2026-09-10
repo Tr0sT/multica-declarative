@@ -11,7 +11,7 @@ import (
 func TestVersion(t *testing.T) {
 	var out, errout bytes.Buffer
 	code := Run([]string{"--version"}, &out, &errout)
-	if code != 0 || !strings.Contains(out.String(), "0.4.0") {
+	if code != 0 || strings.TrimSpace(out.String()) != Version {
 		t.Fatalf("code=%d out=%q err=%q", code, out.String(), errout.String())
 	}
 }

@@ -1,6 +1,6 @@
 # Managed Multica resources
 
-This document describes the resources and fields supported by `multica-declarative` v0.4.
+This document describes the resources and fields supported by `multica-declarative` v0.5 (tested with Multica 0.4.42).
 The official `multica` CLI remains the compatibility boundary. A field is never changed through
 direct database access or an undocumented HTTP endpoint.
 
@@ -48,6 +48,7 @@ multica:
   runtimeConfig:
     sandbox: strict
   thinkingLevel: high
+  serviceTier: priority
   maxConcurrentTasks: 1
 
   permission:
@@ -83,7 +84,11 @@ multica:
 |---|---:|---:|---|
 | name, description, instructions | yes | yes | Name is currently also the identity key. |
 | runtime, runtimeConfig | yes | yes | Omitting `runtimeConfig` declares an empty object. |
-| model, thinkingLevel, maxConcurrentTasks | yes | yes | |
+| model, thinkingLevel, maxConcurrentTasks | yes | yes | Runtime-specific values are passed through, not translated. |
+| serviceTier | yes | yes | Omitted = unmanaged; `""` = inherit local Codex configuration; `default` = Standard; other values come from the runtime catalog. |
+| conversationStarters | yes | observe-only | Ordered `label`/`prompt` entries. Omitted = unmanaged; explicit `[]` asserts empty. Changes/creation with non-empty starters fail before writes. |
+| systemKey | yes | observe-only | Product-managed identity, exported only when present. Cannot be changed or recreated as an ordinary agent. |
+| unbound | yes | existing agents only | Explicitly exports an agent whose runtime was removed. Cannot create/detach through this CLI; choosing `runtime` again supports rebinding. |
 | customArgs | yes | yes | Exported verbatim with the rest of the declaration. |
 | private/workspace/member invocation permissions | yes | yes | Team targets are rejected because the CLI does not support them. |
 | skill assignments | yes | enabled skills only | Disabled assignments are exported and compared, but the CLI cannot change their enabled flag. |
@@ -94,7 +99,7 @@ multica:
 | disabledRuntimeSkills | yes | observe-only | Apply fails clearly when a change is requested. |
 | composioToolkitAllowlist | yes | observe-only | Apply fails clearly when a change is requested. |
 
-Observe-only fields are preserved by `export` and included in `plan`. They are not silently dropped.
+Observe-only fields are preserved by `export` and checked during `plan`/`apply` preflight. They are not silently dropped.
 Creating an agent that requires a non-empty observe-only field is rejected, because the official CLI
 cannot faithfully reproduce it in a different workspace.
 
@@ -111,7 +116,8 @@ an empty list and still participates in drift detection.
 }
 ```
 
-`mcpConfigFile` must contain any valid JSON accepted by Multica. Export writes both files with local
+`mcpConfigFile` must contain a JSON object or `null`, matching the official CLI
+contract. Export writes both files with local
 mode `0600`; they are part of the desired state and should be committed with the agent declaration.
 All resource file references must be relative regular files inside their declaration directory;
 absolute paths, parent traversal, and symlinks are rejected.
@@ -141,3 +147,60 @@ members:
 The leader and agent members reference agents by declaration name. Human members use their Multica
 member UUID. `plan` and `apply` manage description, instructions, leader, avatar URL, member set,
 and member roles. A leader is always reconciled as an agent member with role `leader`.
+
+## Multica 0.4.42 compatibility boundaries
+
+The existing `v1alpha1` format remains valid. Newly introduced `serviceTier`,
+`conversationStarters`, and `systemKey` fields are unmanaged when absent, so an
+older declaration cannot silently clear settings it never described. Export
+writes explicit service-tier and conversation-starter values, including empty
+ones. A system agent's `system_instructions` are maintained by Multica itself;
+only its workspace-owned `instructions` are exported.
+
+An existing agent with no runtime is represented explicitly:
+
+```yaml
+name: Disconnected Agent
+multica:
+  unbound: true
+  serviceTier: ""
+  conversationStarters: []
+  maxConcurrentTasks: 1
+  permission: private
+```
+
+`unbound: true` and `runtime` are mutually exclusive. This snapshot can be
+validated and reconciled against the same unbound agent. To recreate or bind it,
+remove `unbound` and provide a runtime selector. Creating a product-managed agent
+with `systemKey` still requires Multica to provision that identity.
+
+The CLI can read conversation starters but has no create/update flag for them.
+They are kept as ordered `label`/`prompt` entries; at most three, with label and
+prompt limits of 80 and 4,000 Unicode code points. A requested difference in
+these or other observe-only fields fails preflight before any mutation rather
+than pretending it can be applied. Model IDs, thinking levels and service tiers
+are runtime-defined; validation does not replace the runtime's model catalog.
+
+Skill reads explicitly request `--with-content`. A missing/null body or file
+list is rejected before `plan`, `apply`, or export can treat it as empty data.
+Explicitly empty bodies remain distinguishable from missing fields. No external
+CLI adapter is needed.
+
+Export refuses redacted MCP configurations, redacted Composio allowlists, and
+masked `runtimeConfig.gateway.token` credentials. The `***` placeholder is not
+a usable secret and must not be committed as a replacement credential. Existing
+snapshots are not replaced on these failures. Use an appropriately authorized
+human profile; do not bypass task-scoped authentication restrictions.
+
+Workspace MCP library entries are **write-only**, even for owners; the official
+CLI lists only IDs, names and transports. That library and its per-agent
+assignments are outside this schema. Export emits a warning whenever the library
+is non-empty. Preserve their original configuration separately; this exporter
+cannot be used as a complete workspace backup. It also does not manage issues,
+projects, autopilots, chats, task history, or machine/runtime provisioning.
+
+Source contracts (pinned to the tested release):
+[skill content](https://github.com/multica-ai/multica/blob/v0.4.42/server/cmd/multica/cmd_skill.go),
+[agent flags](https://github.com/multica-ai/multica/blob/v0.4.42/server/cmd/multica/cmd_agent.go),
+[agent response and validation](https://github.com/multica-ai/multica/blob/v0.4.42/server/internal/handler/agent.go),
+[workspace MCP write-only boundary](https://github.com/multica-ai/multica/blob/v0.4.42/server/cmd/multica/cmd_workspace.go).

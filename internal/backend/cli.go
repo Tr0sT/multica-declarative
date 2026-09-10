@@ -51,9 +51,33 @@ func (c *CLI) ListSkills() ([]model.Skill, error) {
 	return result, nil
 }
 func (c *CLI) GetSkill(id string) (model.Skill, error) {
-	var v model.Skill
-	err := c.runJSON(&v, "skill", "get", id, "--output", "json")
-	return v, err
+	var wire struct {
+		ID          string  `json:"id"`
+		Name        string  `json:"name"`
+		Description string  `json:"description"`
+		Content     *string `json:"content"`
+		Files       *[]struct {
+			ID      string  `json:"id"`
+			Path    string  `json:"path"`
+			Content *string `json:"content"`
+		} `json:"files"`
+	}
+	if err := c.runJSON(&wire, "skill", "get", id, "--with-content", "--output", "json"); err != nil {
+		return model.Skill{}, err
+	}
+	// Missing/null is not the same as an explicitly empty body or file list.
+	// Fail closed even if a mismatched server ignores --with-content.
+	if wire.Content == nil || wire.Files == nil {
+		return model.Skill{}, fmt.Errorf("skill %q returned incomplete content despite --with-content; use a compatible Multica CLI/server", id)
+	}
+	v := model.Skill{ID: wire.ID, Name: wire.Name, Description: wire.Description, Content: *wire.Content}
+	for _, file := range *wire.Files {
+		if file.Content == nil {
+			return model.Skill{}, fmt.Errorf("skill %q returned a file without content despite --with-content", id)
+		}
+		v.Files = append(v.Files, model.SkillFile{ID: file.ID, Path: file.Path, Content: *file.Content})
+	}
+	return v, nil
 }
 func (c *CLI) CreateSkill(in model.SkillInput) (model.Skill, error) {
 	args := []string{"skill", "create", "--name", in.Name}
@@ -227,7 +251,15 @@ func (c *CLI) RemoveSquadMember(id string, m model.SquadMember) error {
 
 func (c *CLI) agentArgs(prefix []string, in model.AgentInput, includeClears bool) ([]string, error) {
 	args := append([]string{}, prefix...)
-	args = append(args, "--name", in.Name, "--runtime-id", in.RuntimeID)
+	args = append(args, "--name", in.Name)
+	// Existing unbound agents may be edited without sending an invalid empty UUID.
+	// Creation still requires a runtime, as enforced by the official CLI.
+	if in.RuntimeID != "" || !includeClears {
+		args = append(args, "--runtime-id", in.RuntimeID)
+	}
+	if in.ServiceTier != nil {
+		args = append(args, "--service-tier", *in.ServiceTier)
+	}
 	if includeClears || in.Description != "" {
 		args = append(args, "--description", in.Description)
 	}
@@ -408,4 +440,10 @@ func normalizeAgent(v *model.Agent) {
 	if v.ComposioToolkitAllowlist == nil {
 		v.ComposioToolkitAllowlist = []string{}
 	}
+}
+
+func (c *CLI) ListWorkspaceMCPServers() ([]model.WorkspaceMCPServer, error) {
+	var servers []model.WorkspaceMCPServer
+	err := c.runJSON(&servers, "workspace", "mcp", "list", "--output", "json")
+	return servers, err
 }

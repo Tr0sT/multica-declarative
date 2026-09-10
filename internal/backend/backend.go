@@ -38,3 +38,9 @@ type SquadOperations interface {
 	SetSquadMemberRole(squadID string, member model.SquadMember) error
 	RemoveSquadMember(squadID string, member model.SquadMember) error
 }
+
+// WorkspaceMCPReader exposes metadata only. Stored library entries are write-only
+// in Multica and cannot be reconstructed by an exporter.
+type WorkspaceMCPReader interface {
+	ListWorkspaceMCPServers() ([]model.WorkspaceMCPServer, error)
+}
