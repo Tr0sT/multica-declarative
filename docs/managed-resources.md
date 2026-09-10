@@ -204,3 +204,8 @@ Source contracts (pinned to the tested release):
 [agent flags](https://github.com/multica-ai/multica/blob/v0.4.42/server/cmd/multica/cmd_agent.go),
 [agent response and validation](https://github.com/multica-ai/multica/blob/v0.4.42/server/internal/handler/agent.go),
 [workspace MCP write-only boundary](https://github.com/multica-ai/multica/blob/v0.4.42/server/cmd/multica/cmd_workspace.go).
+
+## Projects and autopilots
+
+See [projects-autopilots.md](projects-autopilots.md) for the additional resource
+collections, CLI compatibility table in prose, and migration safety details.

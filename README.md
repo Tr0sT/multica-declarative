@@ -1,6 +1,6 @@
 # multica-declarative
 
-**Manage Multica agents, skills, and squads as code.**
+**Manage Multica agents, skills, squads, projects, and autopilots as code.**
 
 `multica-declarative` is a standalone Go CLI that reads version-controlled YAML and
 [Agent Skills](https://agentskills.io/) directories, compares them with a Multica workspace,
@@ -25,7 +25,9 @@ Git repository
   ├── multica.yaml
   ├── agents/
   ├── skills/
-  └── squads/
+  ├── squads/
+  ├── projects/
+  └── autopilots/
           │
           ▼
 multica-declarative export / validate / plan / apply
@@ -40,12 +42,13 @@ Multica
 ## Current support
 
 - strict workspace and resource YAML validation;
-- recursive agent, skill, and squad discovery, allowing arbitrary grouping directories;
+- recursive agent, skill, squad, project, and autopilot discovery, allowing arbitrary grouping directories;
 - standard Agent Skills directories with `SKILL.md` and supporting text files;
 - agents with instructions, runtime and runtime config, model, reasoning level, concurrency,
   custom arguments, invocation permissions, skill assignments, custom env files, MCP config files,
   avatars, archived/unbound state, service tier, and observe-only conversation starters/system identity;
 - squads with leader, instructions, avatar URL, agent/human members, and roles;
+- projects with descriptions, leads, dates, resources, and autopilots with prompts, project/agent references, schedules/webhooks, and subscribers;
 - read-only export into round-trippable declarations;
 - reviewable `plan` output;
 - convergent `apply` through the official CLI.
@@ -107,7 +110,7 @@ relative directories are preserved, including grouping directories such as `agen
 `agents/vds/`, or `skills/shared/`. A resource not already present in the export tree is created
 directly under its collection directory using a generated slug.
 
-`--force` replaces only generated `multica.yaml`, `agents/`, `skills/`, and `squads/` paths.
+`--force` replaces only generated `multica.yaml`, `agents/`, `skills/`, `squads/`, `projects/`, and `autopilots/` paths.
 Unrelated files and `.git/` are preserved.
 
 ## Commands
@@ -183,6 +186,13 @@ description: Unity implementation and validation conventions.
 Additional skill files must be non-empty UTF-8 text because the current Multica skill file surface is
 text-oriented.
 
+## Projects and autopilots
+
+See [docs/projects-autopilots.md](docs/projects-autopilots.md) for YAML examples,
+import/export behavior, safe activation, child identity and webhook/CLI limitations.
+Projects and autopilots use the same `export`, `validate`, `plan`, and `apply` commands.
+Old declarations that omit these collections leave existing server resources untouched.
+
 ## Agents and squads
 
 See [docs/managed-resources.md](docs/managed-resources.md) for complete examples, secret-file rules,
@@ -199,7 +209,7 @@ Important compatibility boundary:
 - `export` and `plan` never mutate Multica;
 - export validates a complete staging snapshot before replacing generated files;
 - non-empty export targets require `--force`;
-- undeclared agents, skills, and squads are untouched;
+- undeclared agents, skills, squads, projects, and autopilots are untouched;
 - top-level pruning is not implemented;
 - secret values are exported to agent JSON files with local mode `0600` and are never printed in plans;
 - custom env and MCP values are passed to Multica by file, not embedded in process arguments;

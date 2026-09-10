@@ -44,3 +44,24 @@ type SquadOperations interface {
 type WorkspaceMCPReader interface {
 	ListWorkspaceMCPServers() ([]model.WorkspaceMCPServer, error)
 }
+
+// Optional capabilities keep older mock/backends usable for agent-only projects.
+type ProjectOperations interface {
+	ListProjects() ([]model.WorkspaceProject, error)
+	GetProject(string) (model.WorkspaceProject, error)
+	CreateProject(model.ProjectInput) (model.WorkspaceProject, error)
+	UpdateProject(string, model.ProjectInput, []string) (model.WorkspaceProject, error)
+	ListProjectResources(string) ([]model.ProjectResource, error)
+	AddProjectResource(string, model.ProjectResourceSpec) (model.ProjectResource, error)
+	UpdateProjectResource(string, string, model.ProjectResourceSpec) error
+	RemoveProjectResource(string, string) error
+}
+type AutopilotOperations interface {
+	ListAutopilots() ([]model.Autopilot, error)
+	GetAutopilot(string) (model.AutopilotDetail, error)
+	CreateAutopilot(model.AutopilotInput) (model.Autopilot, error)
+	UpdateAutopilot(string, model.AutopilotInput, []string) error
+	AddAutopilotTrigger(string, model.AutopilotTriggerSpec) (model.AutopilotTrigger, error)
+	UpdateAutopilotTrigger(string, string, model.AutopilotTriggerSpec) error
+	DeleteAutopilotTrigger(string, string) error
+}

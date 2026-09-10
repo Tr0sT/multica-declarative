@@ -13,6 +13,9 @@ import (
 )
 
 func preserveSnapshotDirectories(target string, snapshot *snapshot) error {
+	if err := preserveWorkspaceDirectories(target, snapshot); err != nil {
+		return err
+	}
 	if err := preserveResourceDirectories(target, "skills", "SKILL.md", snapshot.skills,
 		func(skill *exportedSkill) (string, *string) { return skill.name, &skill.directory }, skillName); err != nil {
 		return err
@@ -137,7 +140,10 @@ func skillName(data []byte) (string, error) {
 }
 
 func writeSnapshot(root string, v snapshot) error {
-	for _, dir := range []string{"agents", "skills", "squads"} {
+	if err := writeWorkspaceResources(root, v); err != nil {
+		return err
+	}
+	for _, dir := range []string{"agents", "skills", "squads", "projects", "autopilots"} {
 		if err := os.MkdirAll(filepath.Join(root, dir), 0755); err != nil {
 			return err
 		}

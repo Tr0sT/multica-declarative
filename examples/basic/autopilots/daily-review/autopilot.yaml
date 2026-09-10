@@ -1,0 +1,14 @@
+name: Daily Review
+description: Review the Unity prototype and report likely regressions.
+agent: Unity Developer
+project: Unity Prototype
+mode: create_issue
+status: paused
+issueTitleTemplate: "Review {{date}}"
+subscribers: []
+triggers:
+  - kind: schedule
+    enabled: true
+    cron: "0 9 * * 1-5"
+    timezone: UTC
+    label: Weekdays

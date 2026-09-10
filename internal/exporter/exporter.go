@@ -24,27 +24,29 @@ const (
 	mcpConfigFileName = "mcp.json"
 )
 
-var generatedPaths = []string{"multica.yaml", "agents", "skills", "squads"}
+var generatedPaths = []string{"multica.yaml", "agents", "skills", "squads", "projects", "autopilots"}
 
 type Options struct {
 	OutputDir string
 	Force     bool
 }
 type Result struct {
-	OutputDir                        string
-	Skills, Agents, Runtimes, Squads int
-	Warnings                         []string
+	OutputDir                                              string
+	Skills, Agents, Runtimes, Squads, Projects, Autopilots int
+	Warnings                                               []string
 }
 type Exporter struct {
 	Backend    backend.Backend
 	HTTPClient *http.Client
 }
 type snapshot struct {
-	manifest workspaceDocument
-	skills   []exportedSkill
-	agents   []exportedAgent
-	squads   []exportedSquad
-	warnings []string
+	projects   []exportedProject
+	autopilots []exportedAutopilot
+	manifest   workspaceDocument
+	skills     []exportedSkill
+	agents     []exportedAgent
+	squads     []exportedSquad
+	warnings   []string
 }
 type exportedSkill struct {
 	name, directory, content string
@@ -149,7 +151,7 @@ func (e Exporter) Export(options Options) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	if len(snap.skills)+len(snap.agents)+len(snap.squads) == 0 {
+	if len(snap.skills)+len(snap.agents)+len(snap.squads)+len(snap.projects)+len(snap.autopilots) == 0 {
 		return Result{}, fmt.Errorf("multica workspace contains no exportable resources")
 	}
 	if err := preserveSnapshotDirectories(absolute, &snap); err != nil {
@@ -173,7 +175,7 @@ func (e Exporter) Export(options Options) (Result, error) {
 	if err := installSnapshot(staging, absolute, options.Force); err != nil {
 		return Result{}, err
 	}
-	return Result{OutputDir: absolute, Skills: len(snap.skills), Agents: len(snap.agents), Runtimes: len(snap.manifest.Runtimes), Squads: len(snap.squads), Warnings: snap.warnings}, nil
+	return Result{OutputDir: absolute, Skills: len(snap.skills), Agents: len(snap.agents), Runtimes: len(snap.manifest.Runtimes), Squads: len(snap.squads), Projects: len(snap.projects), Autopilots: len(snap.autopilots), Warnings: snap.warnings}, nil
 }
 
 func (e Exporter) readSnapshot() (snapshot, error) {
@@ -360,6 +362,7 @@ func (e Exporter) readSnapshot() (snapshot, error) {
 		agents = append(agents, ea)
 	}
 	squads := []exportedSquad{}
+	squadNames := map[string]string{}
 	if ops, ok := e.Backend.(backend.SquadOperations); ok {
 		items, err := ops.ListSquads()
 		if err != nil {
@@ -418,10 +421,15 @@ func (e Exporter) readSnapshot() (snapshot, error) {
 				sq.document.InstructionsFile = "SQUAD.md"
 			}
 			squads = append(squads, sq)
+			squadNames[s.ID] = s.Name
 		}
 	}
 	manifest := workspaceDocument{APIVersion: apiVersion, Runtimes: runtimeDocs}
-	return snapshot{manifest: manifest, skills: skills, agents: agents, squads: squads, warnings: warnings}, nil
+	snap := snapshot{manifest: manifest, skills: skills, agents: agents, squads: squads, warnings: warnings}
+	if err := e.readWorkspaceResources(&snap, agentNameByID, squadNames); err != nil {
+		return snapshot{}, err
+	}
+	return snap, nil
 }
 
 func hasJSONValue(value json.RawMessage) bool {

@@ -38,6 +38,7 @@ type observedSquad struct {
 }
 
 type inspection struct {
+	workspace    *workspaceState
 	changes      []model.Change
 	skillChanges map[string]model.Change
 	agentChanges map[string]model.Change
@@ -202,6 +203,9 @@ func (r Reconciler) inspect(project model.Project) (inspection, error) {
 			state.squadChanges[d.Name] = change
 			state.changes = append(state.changes, change)
 		}
+	}
+	if err := r.inspectWorkspace(project, &state); err != nil {
+		return state, err
 	}
 	return state, nil
 }
@@ -389,7 +393,7 @@ func (r Reconciler) Apply(project model.Project, report func(model.Change)) erro
 			report(change)
 		}
 	}
-	return nil
+	return r.applyWorkspace(project, state, agentIDs, report)
 }
 
 func (r Reconciler) diffAgent(d model.AgentSpec, runtimeID string, a model.Agent, skills []model.SkillSummary) ([]string, error) {
