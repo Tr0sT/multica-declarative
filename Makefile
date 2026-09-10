@@ -21,3 +21,12 @@ check:
 # Explicit opt-in: MULTICA_BIN must point to the official version in integration/multica.lock.json.
 integration:
 	go test -race -tags=integration ./...
+
+# Opt-in CLI build for emoji writes; stock 0.4.42 can export but has no setter.
+.PHONY: avatar-cli integration-emoji
+avatar-cli:
+	bash scripts/build-avatar-cli.sh
+
+# Both MULTICA_BIN (stock) and MULTICA_EMOJI_BIN (patched) are mandatory.
+integration-emoji:
+	go test -race -tags=integration,emoji ./integration -run Emoji

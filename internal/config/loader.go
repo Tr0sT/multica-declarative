@@ -121,6 +121,7 @@ type agentMulticaDocument struct {
 	CustomEnvFile            string                       `yaml:"customEnvFile"`
 	MCPConfigFile            string                       `yaml:"mcpConfigFile"`
 	AvatarFile               string                       `yaml:"avatarFile"`
+	AvatarURL                *string                      `yaml:"avatarUrl"`
 	Archived                 *bool                        `yaml:"archived"`
 	DisabledRuntimeSkills    []model.DisabledRuntimeSkill `yaml:"disabledRuntimeSkills"`
 	ComposioToolkitAllowlist []string                     `yaml:"composioToolkitAllowlist"`
@@ -355,6 +356,14 @@ func loadAgent(path string) (model.AgentSpec, error) {
 		}
 		mcp = append([]byte(nil), data...)
 	}
+	if d.Multica.AvatarURL != nil {
+		if err := model.ValidateAvatarURL(*d.Multica.AvatarURL); err != nil {
+			return model.AgentSpec{}, fmt.Errorf("%s: %w", path, err)
+		}
+		if d.Multica.AvatarFile != "" {
+			return model.AgentSpec{}, fmt.Errorf("%s: avatarUrl and avatarFile are mutually exclusive", path)
+		}
+	}
 	avatarFile := ""
 	if strings.TrimSpace(d.Multica.AvatarFile) != "" {
 		avatarFile, err = resolvePath(filepath.Dir(path), d.Multica.AvatarFile)
@@ -393,7 +402,7 @@ func loadAgent(path string) (model.AgentSpec, error) {
 		PermissionMode: permissionMode, InvocationTargets: targets,
 		CustomArgs: customArgs, ManageCustomEnv: manageEnv, CustomEnv: customEnv,
 		CustomEnvFile: customEnvFile, ManageMCPConfig: manageMCP, MCPConfig: mcp,
-		MCPConfigFile: mcpFile, AvatarFile: avatarFile, Archived: archived,
+		MCPConfigFile: mcpFile, AvatarFile: avatarFile, AvatarURL: d.Multica.AvatarURL, Archived: archived,
 		DisabledRuntimeSkills: disabled, ComposioToolkitAllowlist: allowlist,
 	}, nil
 }

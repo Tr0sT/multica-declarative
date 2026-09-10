@@ -39,3 +39,10 @@ jobs:
           tar -xzf "$archive" -C "$RUNNER_TEMP" multica
       - name: Real CLI contracts and round-trip regressions
         run: MULTICA_BIN="$RUNNER_TEMP/multica" make integration
+
+      - name: Build opt-in CLI avatar setter patch
+        run: make avatar-cli
+      - name: Stock and patched CLI emoji avatar regressions
+        run: |
+          MULTICA_BIN="$RUNNER_TEMP/multica" \
+          MULTICA_EMOJI_BIN="$GITHUB_WORKSPACE/bin/multica-avatar" make integration-emoji

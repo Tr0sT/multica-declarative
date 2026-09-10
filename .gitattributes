@@ -1,0 +1,2 @@
+# Unified patches contain a context-space before upstream Go tabs.
+compat/*.patch -whitespace

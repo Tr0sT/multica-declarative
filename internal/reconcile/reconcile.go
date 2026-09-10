@@ -150,7 +150,7 @@ func (r Reconciler) inspect(project model.Project) (inspection, error) {
 			if err := validateObservedOnlyChanges(d, a, skills); err != nil {
 				return state, err
 			}
-			if hasAnyField(fields, "customEnv", "avatar", "archived") || (a.Archived() && requiresActiveAgent(fields)) {
+			if hasAnyField(fields, "customEnv", "archived") || (d.AvatarFile != "" && hasAnyField(fields, "avatar")) || (a.Archived() && requiresActiveAgent(fields)) {
 				if _, ok := r.Backend.(backend.AgentOperations); !ok {
 					return state, fmt.Errorf("backend cannot apply auxiliary fields for agent %q", d.Name)
 				}
@@ -216,6 +216,9 @@ func (r Reconciler) Apply(project model.Project, report func(model.Change)) erro
 	}
 	state, err := r.inspect(project)
 	if err != nil {
+		return err
+	}
+	if err := r.checkAvatarWrites(project, state); err != nil {
 		return err
 	}
 	skillIDs := map[string]string{}
@@ -308,6 +311,12 @@ func (r Reconciler) Apply(project model.Project, report func(model.Change)) erro
 				if err := ops.SetAgentEnv(a.ID, d.CustomEnvFile); err != nil {
 					return err
 				}
+			}
+		}
+		if d.AvatarURL != nil && (created || hasAnyField(change.Fields, "avatar")) {
+			ops := r.Backend.(backend.AgentAvatarReferences)
+			if err := ops.SetAgentAvatarURL(a.ID, *d.AvatarURL); err != nil {
+				return err
 			}
 		}
 		if d.AvatarFile != "" {
@@ -461,6 +470,15 @@ func (r Reconciler) diffAgent(d model.AgentSpec, runtimeID string, a model.Agent
 			fields = append(fields, "customEnv")
 		}
 	}
+	if d.AvatarURL != nil {
+		actual := ""
+		if a.AvatarURL != nil {
+			actual = *a.AvatarURL
+		}
+		if *d.AvatarURL != actual {
+			fields = append(fields, "avatar")
+		}
+	}
 	if d.AvatarFile != "" {
 		if a.AvatarURL == nil || *a.AvatarURL == "" {
 			fields = append(fields, "avatar")
@@ -490,6 +508,10 @@ func (r Reconciler) diffAgent(d model.AgentSpec, runtimeID string, a model.Agent
 }
 
 func (r Reconciler) avatarDiffers(file, url string) (bool, error) {
+	if strings.HasPrefix(url, "emoji:") {
+		// Switching from an emoji to an image never needs an HTTP download.
+		return true, nil
+	}
 	local, err := os.ReadFile(file)
 	if err != nil {
 		return false, err

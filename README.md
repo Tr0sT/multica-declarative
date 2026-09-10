@@ -6,8 +6,9 @@
 [Agent Skills](https://agentskills.io/) directories, compares them with a Multica workspace,
 and reconciles the difference through the official `multica` CLI.
 
-The project deliberately does not fork Multica, access its database, or call undocumented HTTP
-endpoints. Git stores desired state and history; Multica remains responsible for runtime behavior.
+The reconciler does not access Multica's database or bypass its CLI for HTTP mutations.
+An optional, pinned CLI source patch supplies the missing emoji avatar setter in 0.4.42
+(see [emoji avatars](docs/emoji-avatars.md)); the server and daemon are not changed. Git stores desired state and history; Multica remains responsible for runtime behavior.
 
 > Status: early MVP. The declaration format is `v1alpha1` and may change.
 >
@@ -17,6 +18,13 @@ endpoints. Git stores desired state and history; Multica remains responsible for
 > valid. New agent fields are opt-in for older YAML; export preserves them explicitly.
 > See [compatibility boundaries](docs/managed-resources.md#multica-0442-compatibility-boundaries)
 > for read-only fields and resources that cannot be fully exported.
+>
+> Emoji avatars now export losslessly as `multica.avatarUrl: "emoji:🌞"`.
+> Stock 0.4.42 can export/compare these snapshots, but cannot restore a changed emoji.
+> For writes, build the opt-in CLI with `make avatar-cli` and pass
+> `--multica-bin /path/to/bin/multica-avatar`. An unsupported write fails before
+> any resource mutation. [Setup and migration](docs/emoji-avatars.md).
+
 
 ## Architecture
 
