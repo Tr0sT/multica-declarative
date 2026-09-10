@@ -72,6 +72,7 @@ type AgentSpec struct {
 	MCPConfig                json.RawMessage
 	MCPConfigFile            string
 	AvatarFile               string
+	AvatarURL                *string // nil: unmanaged; empty: clear; otherwise an emoji: reference.
 	Archived                 bool
 	DisabledRuntimeSkills    []DisabledRuntimeSkill
 	ComposioToolkitAllowlist []string

@@ -94,7 +94,8 @@ multica:
 | skill assignments | yes | enabled skills only | Disabled assignments are exported and compared, but the CLI cannot change their enabled flag. |
 | customEnvFile | yes | yes | Export writes `custom-env.json` beside `agent.yaml`. Use `{}` to clear. |
 | mcpConfigFile | yes | yes | Export writes `mcp.json`; export fails if Multica returns a redacted config. A file containing `null` clears it. |
-| avatarFile | yes | yes | Export downloads the current avatar when possible. |
+| avatarFile | yes | yes | Image files only; export downloads HTTP(S) images when possible. Mutually exclusive with avatarUrl. |
+| avatarUrl | yes | CLI capability required | Lossless `emoji:` reference; omitted = unmanaged, `""` = clear. Stock 0.4.42 lacks the setter; see [emoji avatars](emoji-avatars.md). |
 | archived | yes | yes | Omitting `archived` declares an active agent (`false`). |
 | disabledRuntimeSkills | yes | observe-only | Apply fails clearly when a change is requested. |
 | composioToolkitAllowlist | yes | observe-only | Apply fails clearly when a change is requested. |

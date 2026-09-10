@@ -108,6 +108,7 @@ type multicaDocument struct {
 	CustomEnvFile            string                       `yaml:"customEnvFile,omitempty"`
 	MCPConfigFile            string                       `yaml:"mcpConfigFile,omitempty"`
 	AvatarFile               string                       `yaml:"avatarFile,omitempty"`
+	AvatarURL                *string                      `yaml:"avatarUrl,omitempty"`
 	Archived                 bool                         `yaml:"archived,omitempty"`
 	DisabledRuntimeSkills    []model.DisabledRuntimeSkill `yaml:"disabledRuntimeSkills,omitempty"`
 	ComposioToolkitAllowlist []string                     `yaml:"composioToolkitAllowlist,omitempty"`
@@ -349,7 +350,15 @@ func (e Exporter) readSnapshot() (snapshot, error) {
 			ea.mcpConfig = append(json.RawMessage(nil), a.MCPConfig...)
 			ea.document.Multica.MCPConfigFile = mcpConfigFileName
 		}
-		if a.AvatarURL != nil && *a.AvatarURL != "" {
+		if a.AvatarURL != nil && strings.HasPrefix(*a.AvatarURL, "emoji:") {
+			// Emoji avatars are references, not downloadable image URLs. Preserve
+			// every code point (including variation selectors and ZWJ sequences).
+			if err := model.ValidateAvatarURL(*a.AvatarURL); err != nil {
+				return snapshot{}, fmt.Errorf("agent %q: %w", a.Name, err)
+			}
+			value := *a.AvatarURL
+			ea.document.Multica.AvatarURL = &value
+		} else if a.AvatarURL != nil && *a.AvatarURL != "" {
 			data, name, downloadErr := e.downloadAvatar(*a.AvatarURL)
 			if downloadErr != nil {
 				warnings = append(warnings, fmt.Sprintf("agent %q avatar was not exported: %v", a.Name, downloadErr))
