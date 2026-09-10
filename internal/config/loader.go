@@ -209,6 +209,9 @@ func Load(workspacePath string) (model.Project, error) {
 		}
 		project.Squads = append(project.Squads, v)
 	}
+	if err := loadWorkspaceResources(base, &project); err != nil {
+		return model.Project{}, err
+	}
 	if err := validate(project); err != nil {
 		return model.Project{}, err
 	}
@@ -513,7 +516,10 @@ func loadSkill(directory string) (model.SkillSpec, error) {
 }
 
 func validate(p model.Project) error {
-	if len(p.Skills)+len(p.Agents)+len(p.Squads) == 0 {
+	if err := validateWorkspaceReferences(p); err != nil {
+		return err
+	}
+	if len(p.Skills)+len(p.Agents)+len(p.Squads)+len(p.Projects)+len(p.Autopilots) == 0 {
 		return fmt.Errorf("workspace must declare at least one resource")
 	}
 	skills := map[string]struct{}{}

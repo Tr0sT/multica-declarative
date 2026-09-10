@@ -54,13 +54,17 @@ type request struct {
 	body         map[string]any
 }
 type fixture struct {
-	mu           sync.Mutex
-	skill, agent map[string]any
-	files        []map[string]any
-	assigned     []map[string]any
-	env          map[string]string
-	requests     []request
-	metadataOnly bool
+	project, autopilot                    map[string]any
+	resources, triggers, collaborators    []map[string]any
+	resourceSequence, triggerSequence     int
+	failTriggerWrite, incompleteAutopilot bool
+	mu                                    sync.Mutex
+	skill, agent                          map[string]any
+	files                                 []map[string]any
+	assigned                              []map[string]any
+	env                                   map[string]string
+	requests                              []request
+	metadataOnly                          bool
 }
 
 func newFixture(t *testing.T) (*fixture, *backend.CLI) {
@@ -113,6 +117,9 @@ func (f *fixture) serve(w http.ResponseWriter, r *http.Request) {
 	}
 	f.requests = append(f.requests, request{r.Method, r.URL.RequestURI(), data})
 	respond := func(v any) { _ = json.NewEncoder(w).Encode(v) }
+	if f.serveWorkspace(w, r, data) {
+		return
+	}
 	switch r.Method + " " + r.URL.Path {
 	case "GET /api/skills":
 		list := []any{}

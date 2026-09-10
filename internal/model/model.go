@@ -94,6 +94,8 @@ type SquadSpec struct {
 }
 
 type Project struct {
+	Projects         []WorkspaceProjectSpec
+	Autopilots       []AutopilotSpec
 	RuntimeSelectors map[string]RuntimeSelector
 	Skills           []SkillSpec
 	Agents           []AgentSpec
