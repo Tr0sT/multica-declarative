@@ -93,7 +93,11 @@ type agentDocument struct {
 	Multica          multicaDocument `yaml:"multica"`
 }
 type multicaDocument struct {
-	Runtime                  string                       `yaml:"runtime"`
+	Unbound                  bool                         `yaml:"unbound,omitempty"`
+	ServiceTier              *string                      `yaml:"serviceTier,omitempty"`
+	ConversationStarters     *[]model.ConversationStarter `yaml:"conversationStarters,omitempty"`
+	SystemKey                *string                      `yaml:"systemKey,omitempty"`
+	Runtime                  string                       `yaml:"runtime,omitempty"`
 	RuntimeConfig            map[string]any               `yaml:"runtimeConfig,omitempty"`
 	ThinkingLevel            string                       `yaml:"thinkingLevel,omitempty"`
 	MaxConcurrentTasks       int                          `yaml:"maxConcurrentTasks"`
@@ -194,6 +198,15 @@ func (e Exporter) readSnapshot() (snapshot, error) {
 		return snapshot{}, fmt.Errorf("duplicate agent %q", d)
 	}
 	warnings := []string{}
+	if reader, ok := e.Backend.(backend.WorkspaceMCPReader); ok {
+		servers, err := reader.ListWorkspaceMCPServers()
+		if err != nil {
+			return snapshot{}, fmt.Errorf("read workspace MCP metadata: %w", err)
+		}
+		if len(servers) > 0 {
+			warnings = append(warnings, fmt.Sprintf("%d workspace MCP server(s) are outside this snapshot: their configurations are write-only in Multica; the library and its agent assignments must be managed separately", len(servers)))
+		}
+	}
 	skillNames := map[string]struct{}{}
 	usedSkills := map[string]struct{}{}
 	skills := []exportedSkill{}
@@ -271,6 +284,12 @@ func (e Exporter) readSnapshot() (snapshot, error) {
 			}
 			agentEnvironments[a.ID] = environment
 		}
+		if a.ComposioToolkitAllowlistRedacted {
+			return snapshot{}, fmt.Errorf("agent %q Composio allowlist is redacted and cannot be exported faithfully", a.Name)
+		}
+		if model.HasMaskedGatewayToken(a.RuntimeConfig) {
+			return snapshot{}, fmt.Errorf("agent %q runtime gateway token is masked by Multica and cannot be exported faithfully", a.Name)
+		}
 		if a.MCPConfigRedacted {
 			return snapshot{}, fmt.Errorf("agent %q MCP config is redacted and cannot be exported faithfully", a.Name)
 		}
@@ -311,6 +330,15 @@ func (e Exporter) readSnapshot() (snapshot, error) {
 		}
 		dir := uniqueSlug(a.Name, a.ID, usedAgents)
 		ea := exportedAgent{directory: dir, instructions: a.Instructions, document: agentDocument{Name: a.Name, Description: a.Description, InstructionsFile: "AGENT.md", Model: md, Skills: assignments, Multica: multicaDocument{Runtime: aliases[a.RuntimeID], RuntimeConfig: a.RuntimeConfig, ThinkingLevel: a.ThinkingLevel, MaxConcurrentTasks: normalizedConcurrency(a.MaxConcurrentTasks), Permission: permission, CustomArgs: append([]string(nil), a.CustomArgs...), Archived: a.Archived(), DisabledRuntimeSkills: append([]model.DisabledRuntimeSkill(nil), a.DisabledRuntimeSkills...), ComposioToolkitAllowlist: append([]string(nil), a.ComposioToolkitAllowlist...)}}}
+		tier := a.ServiceTier
+		starters := append([]model.ConversationStarter{}, a.ConversationStarters...)
+		ea.document.Multica.ServiceTier = &tier
+		ea.document.Multica.ConversationStarters = &starters
+		ea.document.Multica.Unbound = a.RuntimeID == ""
+		if a.SystemKey != "" {
+			key := a.SystemKey
+			ea.document.Multica.SystemKey = &key
+		}
 		if environment, ok := agentEnvironments[a.ID]; ok {
 			ea.customEnv = environment
 			ea.document.Multica.CustomEnvFile = customEnvFileName

@@ -19,7 +19,7 @@
           pkgs = import nixpkgs { inherit system; };
           package = pkgs.buildGoModule {
             pname = "multica-declarative";
-            version = "0.4.0";
+            version = "0.5.0";
 
             src = self;
             vendorHash = "sha256-g+yaVIx4jxpAQ/+WrGKxhVeliYx7nLQe/zsGpxV4Fn4=";

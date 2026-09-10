@@ -21,7 +21,9 @@ func makeRuntimeDocuments(runtimes []model.Runtime, agents []model.Agent) (map[s
 	usedIDs := map[string]struct{}{}
 	for _, a := range agents {
 		if strings.TrimSpace(a.RuntimeID) == "" {
-			return nil, nil, fmt.Errorf("agent %q has no runtime_id", a.Name)
+			// Multica preserves agents after their runtime is removed. Export their
+			// explicit unbound state instead of inventing a runtime or dropping them.
+			continue
 		}
 		usedIDs[a.RuntimeID] = struct{}{}
 	}

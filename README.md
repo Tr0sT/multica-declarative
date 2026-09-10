@@ -10,6 +10,13 @@ The project deliberately does not fork Multica, access its database, or call und
 endpoints. Git stores desired state and history; Multica remains responsible for runtime behavior.
 
 > Status: early MVP. The declaration format is `v1alpha1` and may change.
+>
+> Compatibility baseline: **Multica 0.4.42**, released September 9, 2026.
+> Version 0.5 requests full skill bodies directly through the official CLI;
+> no `--multica-bin` compatibility wrapper is needed. Existing declarations remain
+> valid. New agent fields are opt-in for older YAML; export preserves them explicitly.
+> See [compatibility boundaries](docs/managed-resources.md#multica-0442-compatibility-boundaries)
+> for read-only fields and resources that cannot be fully exported.
 
 ## Architecture
 
@@ -37,7 +44,7 @@ Multica
 - standard Agent Skills directories with `SKILL.md` and supporting text files;
 - agents with instructions, runtime and runtime config, model, reasoning level, concurrency,
   custom arguments, invocation permissions, skill assignments, custom env files, MCP config files,
-  avatars, and archived state;
+  avatars, archived/unbound state, service tier, and observe-only conversation starters/system identity;
 - squads with leader, instructions, avatar URL, agent/human members, and roles;
 - read-only export into round-trippable declarations;
 - reviewable `plan` output;
@@ -48,7 +55,7 @@ keys and a state file are added.
 
 ## Requirements
 
-- a recent authenticated `multica` CLI;
+- an authenticated **Multica 0.4.42** CLI and compatible server (the tested baseline);
 - Go 1.25+ only when building from source.
 
 Verify the Multica profile first:
@@ -214,6 +221,20 @@ make check
 make build
 ```
 
+Integration tests execute the **real official CLI** against a synthetic local HTTP server:
+
+```bash
+MULTICA_BIN=/absolute/path/to/multica make integration
+```
+
+The binary must match `integration/multica.lock.json`; missing binaries fail the
+explicit integration target rather than silently skipping tests. Tests isolate
+all authentication and task environment values and never contact a live workspace.
+They cover full-content skill reads, byte-preserving export, create/update/no-op
+reconciliation, explicit service-tier clearing, legacy omission, unbound edits and
+rebinding, and fail-closed behavior for incomplete responses. CI downloads the
+pinned CLI, verifies its SHA-256, and runs these tests with the race detector.
+
 The backend is a Go interface. Reconciliation and export are unit-tested without a real workspace;
 separate tests verify generated Multica CLI arguments and round-trip YAML behavior.
 
@@ -224,7 +245,7 @@ separate tests verify generated Multica CLI arguments and round-trip YAML behavi
 3. machine-readable plans and drift/conflict detection;
 4. JSON Schema and editor completion;
 5. ownership-aware `--prune`;
-6. release binaries, Nix packaging, and CI apply workflows.
+6. release binaries and explicit CI apply workflows (a Nix flake is already included).
 
 ## Principles
 
