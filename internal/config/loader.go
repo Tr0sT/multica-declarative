@@ -20,6 +20,7 @@ const apiVersion = "multica-declarative/v1alpha1"
 
 type workspaceDocument struct {
 	APIVersion string                     `yaml:"apiVersion"`
+	Secrets    string                     `yaml:"secrets"`
 	Runtimes   map[string]runtimeDocument `yaml:"runtimes"`
 }
 
@@ -148,7 +149,17 @@ type skillFrontmatter struct {
 	Metadata    map[string]any `yaml:"metadata"`
 }
 
+// LoadOptions can only restrict secret handling; it cannot override a snapshot's
+// secrets: omit policy. The zero value retains the existing full-snapshot behavior.
+type LoadOptions struct {
+	WithoutSecrets bool
+}
+
 func Load(workspacePath string) (model.Project, error) {
+	return LoadWithOptions(workspacePath, LoadOptions{})
+}
+
+func LoadWithOptions(workspacePath string, options LoadOptions) (model.Project, error) {
 	absolute, err := filepath.Abs(workspacePath)
 	if err != nil {
 		return model.Project{}, fmt.Errorf("resolve workspace manifest: %w", err)
@@ -161,8 +172,15 @@ func Load(workspacePath string) (model.Project, error) {
 	if doc.APIVersion != apiVersion {
 		return model.Project{}, fmt.Errorf("unsupported apiVersion %q; expected %q", doc.APIVersion, apiVersion)
 	}
+	switch doc.Secrets {
+	case "", "include":
+	case "omit":
+		options.WithoutSecrets = true
+	default:
+		return model.Project{}, fmt.Errorf("secrets must be include or omit")
+	}
 	base := filepath.Dir(absolute)
-	project := model.Project{RuntimeSelectors: map[string]model.RuntimeSelector{}}
+	project := model.Project{RuntimeSelectors: map[string]model.RuntimeSelector{}, WithoutSecrets: options.WithoutSecrets}
 	for alias, raw := range doc.Runtimes {
 		alias = strings.TrimSpace(alias)
 		if alias == "" {
@@ -193,7 +211,7 @@ func Load(workspacePath string) (model.Project, error) {
 		return project, err
 	}
 	for _, directory := range agentDirs {
-		v, err := loadAgent(filepath.Join(directory, "agent.yaml"))
+		v, err := loadAgentWithOptions(filepath.Join(directory, "agent.yaml"), options)
 		if err != nil {
 			return project, err
 		}
@@ -270,9 +288,21 @@ func discoverResourceDirectories(base, collection, marker string) ([]string, err
 }
 
 func loadAgent(path string) (model.AgentSpec, error) {
+	return loadAgentWithOptions(path, LoadOptions{})
+}
+
+func loadAgentWithOptions(path string, options LoadOptions) (model.AgentSpec, error) {
 	var d agentDocument
 	if err := decodeStrictYAML(path, &d); err != nil {
 		return model.AgentSpec{}, err
+	}
+	if options.WithoutSecrets {
+		// Drop entire secret-bearing fields, not guessed key names. Do this
+		// before resolving/reading JSON files, including missing secret files.
+		d.Multica.CustomEnvFile = ""
+		d.Multica.MCPConfigFile = ""
+		d.Multica.RuntimeConfig = nil
+		d.Multica.CustomArgs = nil
 	}
 	name := strings.TrimSpace(d.Name)
 	if name == "" {
@@ -394,7 +424,8 @@ func loadAgent(path string) (model.AgentSpec, error) {
 		archived = *d.Multica.Archived
 	}
 	return model.AgentSpec{
-		Name: name, Description: strings.TrimSpace(d.Description), Instructions: instructions,
+		WithoutSecrets: options.WithoutSecrets,
+		Name:           name, Description: strings.TrimSpace(d.Description), Instructions: instructions,
 		ModelID: strings.TrimSpace(d.Model.ID), SkillAssignments: assignments,
 		RuntimeRef: runtime, RuntimeConfig: runtimeConfig, Unbound: d.Multica.Unbound,
 		ServiceTier: d.Multica.ServiceTier, ConversationStarters: d.Multica.ConversationStarters, SystemKey: d.Multica.SystemKey,

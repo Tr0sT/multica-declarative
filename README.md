@@ -102,10 +102,15 @@ multica-declarative plan
 ```
 
 The exporter is read-only with respect to Multica. It writes agents, skills, squads, runtime
-selectors, and agent secrets. Custom environment values are stored as `custom-env.json`; MCP
+selectors, projects, autopilots, and (by default) agent secrets. Custom environment values are stored as `custom-env.json`; MCP
 configuration is stored as `mcp.json`. Both files live beside `agent.yaml`, are referenced from it,
 and are intended to be version-controlled with the rest of the declaration. Export fails rather
 than writing an MCP configuration that Multica returned in redacted form.
+
+For a snapshot that omits secret-bearing agent settings, use
+`multica-declarative export --without-secrets --output-dir ./my-workspace`.
+It records `secrets: omit` in the manifest so a later ordinary `plan`/`apply` leaves
+those settings untouched. See [Export and import without secrets](docs/secrets.md).
 
 Refreshing is explicit:
 
@@ -131,6 +136,10 @@ multica-declarative apply --config ./snapshot/multica.yaml
 ```
 
 Flags may appear before or after the command. Use `--multica-bin` to select another Multica binary.
+Use `--without-secrets` with `export` to omit custom env, per-agent MCP configuration,
+`runtimeConfig`, and `customArgs`. Use it with `validate`, `plan`, or `apply` to leave
+those fields unmanaged even in a full snapshot, without opening its secret JSON files.
+A manifest with `secrets: omit` enforces the same policy without repeating the flag.
 
 ### `export`
 

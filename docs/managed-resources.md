@@ -83,7 +83,7 @@ multica:
 | Field | Plan/export | Apply | Notes |
 |---|---:|---:|---|
 | name, description, instructions | yes | yes | Name is currently also the identity key. |
-| runtime, runtimeConfig | yes | yes | Omitting `runtimeConfig` declares an empty object. |
+| runtime, runtimeConfig | yes | yes | Omitting `runtimeConfig` declares an empty object, except under `secrets: omit` / `--without-secrets` where the entire field is unmanaged. |
 | model, thinkingLevel, maxConcurrentTasks | yes | yes | Runtime-specific values are passed through, not translated. |
 | serviceTier | yes | yes | Omitted = unmanaged; `""` = inherit local Codex configuration; `default` = Standard; other values come from the runtime catalog. |
 | conversationStarters | yes | observe-only | Ordered `label`/`prompt` entries. Omitted = unmanaged; explicit `[]` asserts empty. Changes/creation with non-empty starters fail before writes. |
@@ -108,6 +108,14 @@ Empty `disabledRuntimeSkills` and `composioToolkitAllowlist` values may be omitt
 an empty list and still participates in drift detection.
 
 ### Secret files
+
+The rules below describe the default full-snapshot mode. Export with
+`--without-secrets` records `secrets: omit` in `multica.yaml`, omits secret files
+and their references, and also omits the potentially credential-bearing
+`runtimeConfig` and `customArgs` fields. On load/import the policy leaves all four
+fields unmanaged, not empty. Existing server values are not read back through the
+env endpoint or sent to mutation commands. The flag can also be passed to
+`validate`, `plan`, or `apply` for older full snapshots. See [secret handling](secrets.md).
 
 `customEnvFile` must contain a JSON object of string values:
 
