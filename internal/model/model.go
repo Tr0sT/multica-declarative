@@ -49,6 +49,7 @@ type ConversationStarter struct {
 }
 
 type AgentSpec struct {
+	WithoutSecrets           bool // Secret-bearing fields are unmanaged, not cleared.
 	Name                     string
 	Description              string
 	Instructions             string
@@ -95,6 +96,7 @@ type SquadSpec struct {
 }
 
 type Project struct {
+	WithoutSecrets   bool
 	Projects         []WorkspaceProjectSpec
 	Autopilots       []AutopilotSpec
 	RuntimeSelectors map[string]RuntimeSelector
@@ -186,6 +188,7 @@ type SkillFileInput struct {
 }
 
 type AgentInput struct {
+	WithoutSecrets     bool
 	ServiceTier        *string
 	Name               string
 	Description        string

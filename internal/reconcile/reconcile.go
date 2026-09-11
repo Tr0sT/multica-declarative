@@ -121,7 +121,7 @@ func (r Reconciler) inspect(project model.Project) (inspection, error) {
 			if err := validateObservedOnlyOnCreate(d); err != nil {
 				return state, err
 			}
-			if d.ManageCustomEnv || d.AvatarFile != "" || d.Archived {
+			if (!d.WithoutSecrets && d.ManageCustomEnv) || d.AvatarFile != "" || d.Archived {
 				if _, ok := r.Backend.(backend.AgentOperations); !ok {
 					return state, fmt.Errorf("backend cannot apply auxiliary fields for agent %q", d.Name)
 				}
@@ -305,7 +305,7 @@ func (r Reconciler) Apply(project model.Project, report func(model.Change)) erro
 				return err
 			}
 		}
-		if d.ManageCustomEnv {
+		if !d.WithoutSecrets && d.ManageCustomEnv {
 			if created || hasAnyField(change.Fields, "customEnv") {
 				ops := r.Backend.(backend.AgentOperations)
 				if err := ops.SetAgentEnv(a.ID, d.CustomEnvFile); err != nil {
@@ -416,13 +416,13 @@ func (r Reconciler) diffAgent(d model.AgentSpec, runtimeID string, a model.Agent
 	if runtimeID != a.RuntimeID {
 		fields = append(fields, "runtime")
 	}
-	if !equalJSON(d.RuntimeConfig, a.RuntimeConfig) {
+	if !d.WithoutSecrets && !equalJSON(d.RuntimeConfig, a.RuntimeConfig) {
 		fields = append(fields, "runtimeConfig")
 	}
 	if d.ModelID != a.Model {
 		fields = append(fields, "model")
 	}
-	if model.HasMaskedGatewayToken(a.RuntimeConfig) {
+	if !d.WithoutSecrets && model.HasMaskedGatewayToken(a.RuntimeConfig) {
 		return nil, fmt.Errorf("agent %q runtime gateway token is masked and cannot be compared faithfully", d.Name)
 	}
 	if d.ServiceTier != nil && *d.ServiceTier != a.ServiceTier {
@@ -440,7 +440,7 @@ func (r Reconciler) diffAgent(d model.AgentSpec, runtimeID string, a model.Agent
 	if d.MaxConcurrentTasks != a.MaxConcurrentTasks {
 		fields = append(fields, "maxConcurrentTasks")
 	}
-	if !equalStrings(d.CustomArgs, a.CustomArgs) {
+	if !d.WithoutSecrets && !equalStrings(d.CustomArgs, a.CustomArgs) {
 		fields = append(fields, "customArgs")
 	}
 	if !permissionMatches(d, a) {
@@ -449,7 +449,7 @@ func (r Reconciler) diffAgent(d model.AgentSpec, runtimeID string, a model.Agent
 	if !equalSkillAssignments(d.SkillAssignments, skills) {
 		fields = append(fields, "skills")
 	}
-	if d.ManageMCPConfig {
+	if !d.WithoutSecrets && d.ManageMCPConfig {
 		if a.MCPConfigRedacted {
 			return nil, fmt.Errorf("agent %q MCP config is redacted", d.Name)
 		}
@@ -457,7 +457,7 @@ func (r Reconciler) diffAgent(d model.AgentSpec, runtimeID string, a model.Agent
 			fields = append(fields, "mcpConfig")
 		}
 	}
-	if d.ManageCustomEnv {
+	if !d.WithoutSecrets && d.ManageCustomEnv {
 		ops, ok := r.Backend.(backend.AgentOperations)
 		if !ok {
 			return nil, fmt.Errorf("backend cannot read custom env")
@@ -899,7 +899,8 @@ func skillInput(v model.SkillSpec) model.SkillInput {
 }
 func agentInput(v model.AgentSpec, runtimeID string) model.AgentInput {
 	return model.AgentInput{
-		Name: v.Name, Description: v.Description, Instructions: v.Instructions, RuntimeID: runtimeID,
+		WithoutSecrets: v.WithoutSecrets,
+		Name:           v.Name, Description: v.Description, Instructions: v.Instructions, RuntimeID: runtimeID,
 		RuntimeConfig: v.RuntimeConfig, ServiceTier: v.ServiceTier,
 		Model: v.ModelID, ThinkingLevel: v.ThinkingLevel, CustomArgs: append([]string(nil), v.CustomArgs...),
 		PermissionMode:     v.PermissionMode,

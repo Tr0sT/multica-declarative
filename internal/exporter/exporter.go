@@ -27,8 +27,9 @@ const (
 var generatedPaths = []string{"multica.yaml", "agents", "skills", "squads", "projects", "autopilots"}
 
 type Options struct {
-	OutputDir string
-	Force     bool
+	WithoutSecrets bool
+	OutputDir      string
+	Force          bool
 }
 type Result struct {
 	OutputDir                                              string
@@ -66,6 +67,7 @@ type exportedSquad struct {
 }
 type workspaceDocument struct {
 	APIVersion string                     `yaml:"apiVersion"`
+	Secrets    string                     `yaml:"secrets,omitempty"`
 	Runtimes   map[string]runtimeDocument `yaml:"runtimes,omitempty"`
 }
 type runtimeDocument struct {
@@ -148,7 +150,7 @@ func (e Exporter) Export(options Options) (Result, error) {
 	if err := validateTarget(absolute, options.Force); err != nil {
 		return Result{}, err
 	}
-	snap, err := e.readSnapshot()
+	snap, err := e.readSnapshot(options)
 	if err != nil {
 		return Result{}, err
 	}
@@ -179,7 +181,7 @@ func (e Exporter) Export(options Options) (Result, error) {
 	return Result{OutputDir: absolute, Skills: len(snap.skills), Agents: len(snap.agents), Runtimes: len(snap.manifest.Runtimes), Squads: len(snap.squads), Projects: len(snap.projects), Autopilots: len(snap.autopilots), Warnings: snap.warnings}, nil
 }
 
-func (e Exporter) readSnapshot() (snapshot, error) {
+func (e Exporter) readSnapshot(options Options) (snapshot, error) {
 	skillSummaries, err := e.Backend.ListSkills()
 	if err != nil {
 		return snapshot{}, err
@@ -201,6 +203,9 @@ func (e Exporter) readSnapshot() (snapshot, error) {
 		return snapshot{}, fmt.Errorf("duplicate agent %q", d)
 	}
 	warnings := []string{}
+	if options.WithoutSecrets {
+		warnings = append(warnings, "agent custom environment, MCP configuration, runtime config and custom arguments are omitted and will remain unmanaged on import; free-form text and skill files are not scanned for embedded credentials")
+	}
 	if reader, ok := e.Backend.(backend.WorkspaceMCPReader); ok {
 		servers, err := reader.ListWorkspaceMCPServers()
 		if err != nil {
@@ -258,6 +263,18 @@ func (e Exporter) readSnapshot() (snapshot, error) {
 		}
 		if a.ID == "" {
 			return snapshot{}, fmt.Errorf("agent %q has no id", a.Name)
+		}
+		if options.WithoutSecrets {
+			// Work on the returned value, not the backend's maps. Never fetch
+			// custom env or write placeholders for omitted credentials. Agent
+			// get can already contain MCP/runtime data: discard it before any
+			// validation, staging, warnings or serialization of these fields.
+			a.HasCustomEnv = false
+			a.CustomEnvKeyCount = 0
+			a.MCPConfig = nil
+			a.MCPConfigRedacted = false
+			a.RuntimeConfig = nil
+			a.CustomArgs = nil
 		}
 		assigned, err := e.Backend.ListAgentSkills(a.ID)
 		if err != nil {
@@ -434,6 +451,11 @@ func (e Exporter) readSnapshot() (snapshot, error) {
 		}
 	}
 	manifest := workspaceDocument{APIVersion: apiVersion, Runtimes: runtimeDocs}
+	if options.WithoutSecrets {
+		// Persistent import policy is essential: omitting runtimeConfig and
+		// customArgs alone would otherwise declare empty values in v1alpha1.
+		manifest.Secrets = "omit"
+	}
 	snap := snapshot{manifest: manifest, skills: skills, agents: agents, squads: squads, warnings: warnings}
 	if err := e.readWorkspaceResources(&snap, agentNameByID, squadNames); err != nil {
 		return snapshot{}, err
