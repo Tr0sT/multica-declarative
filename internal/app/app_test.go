@@ -40,3 +40,22 @@ func write(t *testing.T, path, content string) {
 		t.Fatal(err)
 	}
 }
+
+func TestWithoutSecretsFlagAllowsImportWithoutLocalSecretFiles(t *testing.T) {
+	root := t.TempDir()
+	write(t, filepath.Join(root, "multica.yaml"), "apiVersion: multica-declarative/v1alpha1\n")
+	write(t, filepath.Join(root, "agents/a/agent.yaml"), "name: Agent\nmultica:\n  unbound: true\n  customEnvFile: not-present.json\n  mcpConfigFile: also-missing.json\n")
+	for _, args := range [][]string{
+		{"--without-secrets", "validate", "--config", filepath.Join(root, "multica.yaml")},
+		{"validate", "--config", filepath.Join(root, "multica.yaml"), "--without-secrets"},
+	} {
+		var out, errout bytes.Buffer
+		if code := Run(args, &out, &errout); code != 0 {
+			t.Fatalf("code=%d: %s", code, errout.String())
+		}
+	}
+	var out, errout bytes.Buffer
+	if code := Run([]string{"validate", "--config", filepath.Join(root, "multica.yaml")}, &out, &errout); code == 0 {
+		t.Fatal("full import stopped requiring declared secret files")
+	}
+}

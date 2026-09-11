@@ -83,13 +83,14 @@ multica:
 | Field | Plan/export | Apply | Notes |
 |---|---:|---:|---|
 | name, description, instructions | yes | yes | Name is currently also the identity key. |
-| runtime, runtimeConfig | yes | yes | Omitting `runtimeConfig` declares an empty object. |
+| runtime, runtimeConfig | yes | yes | Omitting `runtimeConfig` declares an empty object unless `preserveSecrets` is true. |
 | model, thinkingLevel, maxConcurrentTasks | yes | yes | Runtime-specific values are passed through, not translated. |
 | serviceTier | yes | yes | Omitted = unmanaged; `""` = inherit local Codex configuration; `default` = Standard; other values come from the runtime catalog. |
 | conversationStarters | yes | observe-only | Ordered `label`/`prompt` entries. Omitted = unmanaged; explicit `[]` asserts empty. Changes/creation with non-empty starters fail before writes. |
 | systemKey | yes | observe-only | Product-managed identity, exported only when present. Cannot be changed or recreated as an ordinary agent. |
 | unbound | yes | existing agents only | Explicitly exports an agent whose runtime was removed. Cannot create/detach through this CLI; choosing `runtime` again supports rebinding. |
-| customArgs | yes | yes | Exported verbatim with the rest of the declaration. |
+| customArgs | yes | yes | Exported verbatim in full mode; omitted/unmanaged in secret-free mode. |
+| preserveSecrets | yes | yes | `true` leaves custom env, private MCP, runtime config and custom args unmanaged, even during unrelated edits. |
 | private/workspace/member invocation permissions | yes | yes | Team targets are rejected because the CLI does not support them. |
 | skill assignments | yes | enabled skills only | Disabled assignments are exported and compared, but the CLI cannot change their enabled flag. |
 | customEnvFile | yes | yes | Export writes `custom-env.json` beside `agent.yaml`. Use `{}` to clear. |
@@ -108,6 +109,12 @@ Empty `disabledRuntimeSkills` and `composioToolkitAllowlist` values may be omitt
 an empty list and still participates in drift detection.
 
 ### Secret files
+
+`export --without-secrets` omits these files and sets `multica.preserveSecrets: true`.
+The policy survives loading and ordinary import. `plan/apply --without-secrets`
+forces the same policy for a full snapshot, without reading its secret files.
+See [secret-free snapshots](secret-free-snapshots.md) for scope and precautions.
+The rules below apply when these fields are managed (the default).
 
 `customEnvFile` must contain a JSON object of string values:
 
@@ -187,18 +194,19 @@ list is rejected before `plan`, `apply`, or export can treat it as empty data.
 Explicitly empty bodies remain distinguishable from missing fields. No external
 CLI adapter is needed.
 
-Export refuses redacted MCP configurations, redacted Composio allowlists, and
+Full export refuses redacted MCP configurations, redacted Composio allowlists, and
 masked `runtimeConfig.gateway.token` credentials. The `***` placeholder is not
 a usable secret and must not be committed as a replacement credential. Existing
 snapshots are not replaced on these failures. Use an appropriately authorized
-human profile; do not bypass task-scoped authentication restrictions.
+human profile; do not bypass task-scoped authentication restrictions. Secret-free
+mode omits MCP/runtime values, so their redaction does not prevent that export.
 
 Workspace MCP library entries are **write-only**, even for owners; the official
 CLI lists only IDs, names and transports. That library and its per-agent
 assignments are outside this schema. Export emits a warning whenever the library
 is non-empty. Preserve their original configuration separately; this exporter
 cannot be used as a complete workspace backup. It also does not manage issues,
-projects, autopilots, chats, task history, or machine/runtime provisioning.
+chats, task history, or machine/runtime provisioning.
 
 Source contracts (pinned to the tested release):
 [skill content](https://github.com/multica-ai/multica/blob/v0.4.42/server/cmd/multica/cmd_skill.go),

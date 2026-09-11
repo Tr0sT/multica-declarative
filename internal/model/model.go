@@ -49,6 +49,8 @@ type ConversationStarter struct {
 }
 
 type AgentSpec struct {
+	// PreserveSecrets makes custom env, MCP, runtime config and custom args unmanaged.
+	PreserveSecrets          bool
 	Name                     string
 	Description              string
 	Instructions             string
@@ -186,6 +188,7 @@ type SkillFileInput struct {
 }
 
 type AgentInput struct {
+	PreserveSecrets    bool
 	ServiceTier        *string
 	Name               string
 	Description        string

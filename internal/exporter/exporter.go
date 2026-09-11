@@ -27,8 +27,9 @@ const (
 var generatedPaths = []string{"multica.yaml", "agents", "skills", "squads", "projects", "autopilots"}
 
 type Options struct {
-	OutputDir string
-	Force     bool
+	OutputDir      string
+	Force          bool
+	WithoutSecrets bool
 }
 type Result struct {
 	OutputDir                                              string
@@ -95,6 +96,7 @@ type agentDocument struct {
 	Multica          multicaDocument `yaml:"multica"`
 }
 type multicaDocument struct {
+	PreserveSecrets          bool                         `yaml:"preserveSecrets,omitempty"`
 	Unbound                  bool                         `yaml:"unbound,omitempty"`
 	ServiceTier              *string                      `yaml:"serviceTier,omitempty"`
 	ConversationStarters     *[]model.ConversationStarter `yaml:"conversationStarters,omitempty"`
@@ -148,7 +150,7 @@ func (e Exporter) Export(options Options) (Result, error) {
 	if err := validateTarget(absolute, options.Force); err != nil {
 		return Result{}, err
 	}
-	snap, err := e.readSnapshot()
+	snap, err := e.readSnapshot(options)
 	if err != nil {
 		return Result{}, err
 	}
@@ -179,7 +181,7 @@ func (e Exporter) Export(options Options) (Result, error) {
 	return Result{OutputDir: absolute, Skills: len(snap.skills), Agents: len(snap.agents), Runtimes: len(snap.manifest.Runtimes), Squads: len(snap.squads), Projects: len(snap.projects), Autopilots: len(snap.autopilots), Warnings: snap.warnings}, nil
 }
 
-func (e Exporter) readSnapshot() (snapshot, error) {
+func (e Exporter) readSnapshot(options Options) (snapshot, error) {
 	skillSummaries, err := e.Backend.ListSkills()
 	if err != nil {
 		return snapshot{}, err
@@ -201,6 +203,9 @@ func (e Exporter) readSnapshot() (snapshot, error) {
 		return snapshot{}, fmt.Errorf("duplicate agent %q", d)
 	}
 	warnings := []string{}
+	if options.WithoutSecrets {
+		warnings = append(warnings, "agent custom env, MCP config, runtime config and custom args are omitted and will be preserved on import; new agents require separate secret provisioning. Free-form instructions and skill files are not scanned for credentials")
+	}
 	if reader, ok := e.Backend.(backend.WorkspaceMCPReader); ok {
 		servers, err := reader.ListWorkspaceMCPServers()
 		if err != nil {
@@ -249,6 +254,14 @@ func (e Exporter) readSnapshot() (snapshot, error) {
 		a, err := e.Backend.GetAgent(s.ID)
 		if err != nil {
 			return snapshot{}, err
+		}
+		if options.WithoutSecrets {
+			a.HasCustomEnv = false
+			a.CustomEnvKeyCount = 0
+			a.MCPConfig = nil
+			a.MCPConfigRedacted = false
+			a.RuntimeConfig = nil
+			a.CustomArgs = nil
 		}
 		if a.Name == "" {
 			a.Name = s.Name
@@ -333,6 +346,7 @@ func (e Exporter) readSnapshot() (snapshot, error) {
 		}
 		dir := uniqueSlug(a.Name, a.ID, usedAgents)
 		ea := exportedAgent{directory: dir, instructions: a.Instructions, document: agentDocument{Name: a.Name, Description: a.Description, InstructionsFile: "AGENT.md", Model: md, Skills: assignments, Multica: multicaDocument{Runtime: aliases[a.RuntimeID], RuntimeConfig: a.RuntimeConfig, ThinkingLevel: a.ThinkingLevel, MaxConcurrentTasks: normalizedConcurrency(a.MaxConcurrentTasks), Permission: permission, CustomArgs: append([]string(nil), a.CustomArgs...), Archived: a.Archived(), DisabledRuntimeSkills: append([]model.DisabledRuntimeSkill(nil), a.DisabledRuntimeSkills...), ComposioToolkitAllowlist: append([]string(nil), a.ComposioToolkitAllowlist...)}}}
+		ea.document.Multica.PreserveSecrets = options.WithoutSecrets
 		tier := a.ServiceTier
 		starters := append([]model.ConversationStarter{}, a.ConversationStarters...)
 		ea.document.Multica.ServiceTier = &tier

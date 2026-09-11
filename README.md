@@ -102,10 +102,26 @@ multica-declarative plan
 ```
 
 The exporter is read-only with respect to Multica. It writes agents, skills, squads, runtime
-selectors, and agent secrets. Custom environment values are stored as `custom-env.json`; MCP
+selectors, and (by default) agent secrets. Custom environment values are stored as `custom-env.json`; MCP
 configuration is stored as `mcp.json`. Both files live beside `agent.yaml`, are referenced from it,
 and are intended to be version-controlled with the rest of the declaration. Export fails rather
 than writing an MCP configuration that Multica returned in redacted form.
+
+To omit agent secret-bearing settings and preserve server credentials on import:
+
+```bash
+multica-declarative export --output-dir ./snapshot --without-secrets
+multica-declarative plan --config ./snapshot/multica.yaml
+multica-declarative apply --config ./snapshot/multica.yaml
+```
+
+The snapshot records `multica.preserveSecrets: true` per agent. Env, private MCP,
+runtime config, and custom args are omitted and left unmanaged, not cleared.
+Use `plan/apply --without-secrets` to apply the same protection to a full/older
+snapshot. This is not a scanner for credentials hardcoded in skill files or
+instructions; review free-form content before sharing. See
+[secret-free snapshots](docs/secret-free-snapshots.md) for exact scope, refresh
+behavior, and new-agent provisioning.
 
 Refreshing is explicit:
 
@@ -219,7 +235,7 @@ Important compatibility boundary:
 - non-empty export targets require `--force`;
 - undeclared agents, skills, squads, projects, and autopilots are untouched;
 - top-level pruning is not implemented;
-- secret values are exported to agent JSON files with local mode `0600` and are never printed in plans;
+- full export writes agent secret JSON files with local mode `0600`; `--without-secrets` omits agent secret-bearing fields and preserves them on import;
 - custom env and MCP values are passed to Multica by file, not embedded in process arguments;
 - unsupported or lossy operations fail explicitly.
 
@@ -272,5 +288,5 @@ separate tests verify generated Multica CLI arguments and round-trip YAML behavi
 - The official CLI is the compatibility boundary.
 - Apply must converge.
 - Destructive and lossy behavior must be explicit.
-- Secret material is declarative state stored in Git beside its agent; plans, logs, shell history,
-  and command arguments must not print its values.
+- Secret-bearing state can be included in a private snapshot or explicitly left unmanaged.
+  Plans and diagnostics must not print secret values.

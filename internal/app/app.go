@@ -28,6 +28,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	binary := flags.String("multica-bin", "multica", "Multica CLI binary")
 	outputDir := flags.String("output-dir", "multica-export", "directory written by export")
 	force := flags.Bool("force", false, "replace generated export paths")
+	withoutSecrets := flags.Bool("without-secrets", false, "omit agent secret-bearing settings on export; preserve them on plan/apply/validate")
 	version := flags.Bool("version", false, "print version")
 	flags.Usage = func() {
 		fmt.Fprintln(stderr, "Usage: multica-declarative [flags] <export|validate|plan|apply>")
@@ -53,7 +54,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	}
 	cli := backend.NewCLI(*binary)
 	if command == "export" {
-		result, err := (exporter.Exporter{Backend: cli}).Export(exporter.Options{OutputDir: *outputDir, Force: *force})
+		result, err := (exporter.Exporter{Backend: cli}).Export(exporter.Options{OutputDir: *outputDir, Force: *force, WithoutSecrets: *withoutSecrets})
 		if err != nil {
 			fmt.Fprintf(stderr, "export failed: %v\n", err)
 			return 1
@@ -64,7 +65,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "Exported %d skill(s), %d agent(s), %d squad(s), %d project(s), %d autopilot(s), and %d runtime selector(s) to %s.\n", result.Skills, result.Agents, result.Squads, result.Projects, result.Autopilots, result.Runtimes, result.OutputDir)
 		return 0
 	}
-	project, err := config.Load(*configPath)
+	project, err := config.LoadWithOptions(*configPath, config.Options{WithoutSecrets: *withoutSecrets})
 	if err != nil {
 		fmt.Fprintf(stderr, "%s failed: %v\n", command, err)
 		return 1

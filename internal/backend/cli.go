@@ -272,7 +272,7 @@ func (c *CLI) agentArgs(prefix []string, in model.AgentInput, includeClears bool
 	if includeClears || in.ThinkingLevel != "" {
 		args = append(args, "--thinking-level", in.ThinkingLevel)
 	}
-	if includeClears || len(in.CustomArgs) > 0 {
+	if !in.PreserveSecrets && (includeClears || len(in.CustomArgs) > 0) {
 		v := in.CustomArgs
 		if v == nil {
 			v = []string{}
@@ -283,16 +283,20 @@ func (c *CLI) agentArgs(prefix []string, in model.AgentInput, includeClears bool
 		}
 		args = append(args, "--custom-args", string(b))
 	}
-	v := in.RuntimeConfig
-	if v == nil {
-		v = map[string]any{}
+	// Omit these flags entirely: sending {} or replaying redacted/stale server
+	// values would overwrite credentials when editing an unrelated field.
+	if !in.PreserveSecrets {
+		v := in.RuntimeConfig
+		if v == nil {
+			v = map[string]any{}
+		}
+		b, err := json.Marshal(v)
+		if err != nil {
+			return nil, fmt.Errorf("encode runtime config: %w", err)
+		}
+		args = append(args, "--runtime-config", string(b))
 	}
-	b, err := json.Marshal(v)
-	if err != nil {
-		return nil, fmt.Errorf("encode runtime config: %w", err)
-	}
-	args = append(args, "--runtime-config", string(b))
-	if in.ManageMCPConfig {
+	if in.ManageMCPConfig && !in.PreserveSecrets {
 		args = append(args, "--mcp-config-file", in.MCPConfigFile)
 	}
 	mode := in.PermissionMode

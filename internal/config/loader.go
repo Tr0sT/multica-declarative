@@ -108,6 +108,7 @@ type agentDocument struct {
 	Multica          agentMulticaDocument     `yaml:"multica"`
 }
 type agentMulticaDocument struct {
+	PreserveSecrets          bool                         `yaml:"preserveSecrets"`
 	Unbound                  bool                         `yaml:"unbound"`
 	ServiceTier              *string                      `yaml:"serviceTier"`
 	ConversationStarters     *[]model.ConversationStarter `yaml:"conversationStarters"`
@@ -148,7 +149,17 @@ type skillFrontmatter struct {
 	Metadata    map[string]any `yaml:"metadata"`
 }
 
+// Options controls how declarations are interpreted without changing their files.
+type Options struct {
+	WithoutSecrets bool
+}
+
 func Load(workspacePath string) (model.Project, error) {
+	return LoadWithOptions(workspacePath, Options{})
+}
+
+// LoadWithOptions can also safely import a full snapshot without its secret files.
+func LoadWithOptions(workspacePath string, options Options) (model.Project, error) {
 	absolute, err := filepath.Abs(workspacePath)
 	if err != nil {
 		return model.Project{}, fmt.Errorf("resolve workspace manifest: %w", err)
@@ -193,7 +204,7 @@ func Load(workspacePath string) (model.Project, error) {
 		return project, err
 	}
 	for _, directory := range agentDirs {
-		v, err := loadAgent(filepath.Join(directory, "agent.yaml"))
+		v, err := loadAgentWithOptions(filepath.Join(directory, "agent.yaml"), options)
 		if err != nil {
 			return project, err
 		}
@@ -270,9 +281,22 @@ func discoverResourceDirectories(base, collection, marker string) ([]string, err
 }
 
 func loadAgent(path string) (model.AgentSpec, error) {
+	return loadAgentWithOptions(path, Options{})
+}
+
+func loadAgentWithOptions(path string, options Options) (model.AgentSpec, error) {
 	var d agentDocument
 	if err := decodeStrictYAML(path, &d); err != nil {
 		return model.AgentSpec{}, err
+	}
+	// Discard the whole opaque field, not guessed token keys or placeholders.
+	// Do this before reading any secret-file reference or normalizing custom args.
+	preserveSecrets := options.WithoutSecrets || d.Multica.PreserveSecrets
+	if preserveSecrets {
+		d.Multica.CustomEnvFile = ""
+		d.Multica.MCPConfigFile = ""
+		d.Multica.RuntimeConfig = nil
+		d.Multica.CustomArgs = nil
 	}
 	name := strings.TrimSpace(d.Name)
 	if name == "" {
@@ -394,7 +418,8 @@ func loadAgent(path string) (model.AgentSpec, error) {
 		archived = *d.Multica.Archived
 	}
 	return model.AgentSpec{
-		Name: name, Description: strings.TrimSpace(d.Description), Instructions: instructions,
+		PreserveSecrets: preserveSecrets,
+		Name:            name, Description: strings.TrimSpace(d.Description), Instructions: instructions,
 		ModelID: strings.TrimSpace(d.Model.ID), SkillAssignments: assignments,
 		RuntimeRef: runtime, RuntimeConfig: runtimeConfig, Unbound: d.Multica.Unbound,
 		ServiceTier: d.Multica.ServiceTier, ConversationStarters: d.Multica.ConversationStarters, SystemKey: d.Multica.SystemKey,
