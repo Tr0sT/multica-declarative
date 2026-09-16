@@ -174,6 +174,8 @@ func Load(path string, options config.LoadOptions) (*Set, error) {
 	if manifest.Secrets == "omit" {
 		options.WithoutSecrets = true
 	}
+	// Empty workspaces are meaningful entries in an explicitly bound set.
+	options.AllowEmpty = true
 	entries, err := os.ReadDir(filepath.Join(root, "workspaces"))
 	if err != nil {
 		return nil, err
