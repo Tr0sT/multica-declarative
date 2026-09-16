@@ -119,19 +119,21 @@ func (m *Manifest) Keys() []string {
 	return keys
 }
 
-// Enclosing detects the supported workspaces/<key>/multica.yaml layout. This
-// also pins a directly selected child to its parent routing and secrets policy.
+// Enclosing detects <root>/<key>/multica.yaml, with routing at <root>/multica.yaml.
+// This also pins a directly selected child to its parent routing and secrets policy.
 func Enclosing(path string) (*Manifest, string, string, error) {
 	absolute, err := filepath.Abs(path)
 	if err != nil {
 		return nil, "", "", err
 	}
-	child := filepath.Dir(absolute)
-	collection := filepath.Dir(child)
-	if filepath.Base(absolute) != "multica.yaml" || filepath.Base(collection) != "workspaces" {
+	if filepath.Base(absolute) != "multica.yaml" {
 		return nil, "", "", nil
 	}
-	parent := filepath.Join(filepath.Dir(collection), "multica.yaml")
+	child := filepath.Dir(absolute)
+	parent := filepath.Join(filepath.Dir(child), "multica.yaml")
+	if parent == absolute {
+		return nil, "", "", nil
+	}
 	manifest, err := Read(parent)
 	if os.IsNotExist(err) {
 		return nil, "", "", nil
@@ -147,6 +149,36 @@ func Enclosing(path string) (*Manifest, string, string, error) {
 		return nil, "", "", err
 	}
 	return manifest, parent, key, nil
+}
+
+// CheckLayout ignores unrelated root files/directories (including .git), but
+// rejects unlisted direct children containing a manifest. Never follow symlinks.
+func CheckLayout(root string, manifest *Manifest) error {
+	if err := CheckDirectory(root, root); err != nil {
+		return err
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if _, declared := manifest.Workspaces[entry.Name()]; declared {
+			if err := CheckDirectory(root, filepath.Join(root, entry.Name())); err != nil {
+				return err
+			}
+			continue
+		}
+		if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
+			continue
+		}
+		marker := filepath.Join(root, entry.Name(), "multica.yaml")
+		if _, err := os.Lstat(marker); err == nil {
+			return fmt.Errorf("workspace directory %q is not declared in %s", entry.Name(), filepath.Join(root, "multica.yaml"))
+		} else if !os.IsNotExist(err) {
+			return err
+		}
+	}
+	return nil
 }
 
 // Load validates every selected child before the caller can contact Multica.
@@ -168,7 +200,7 @@ func Load(path string, options config.LoadOptions) (*Set, error) {
 		}
 	}
 	root := filepath.Dir(absolute)
-	if err := CheckDirectory(root, filepath.Join(root, "workspaces")); err != nil {
+	if err := CheckLayout(root, manifest); err != nil {
 		return nil, err
 	}
 	if manifest.Secrets == "omit" {
@@ -176,26 +208,12 @@ func Load(path string, options config.LoadOptions) (*Set, error) {
 	}
 	// Empty workspaces are meaningful entries in an explicitly bound set.
 	options.AllowEmpty = true
-	entries, err := os.ReadDir(filepath.Join(root, "workspaces"))
-	if err != nil {
-		return nil, err
-	}
-	for _, entry := range entries {
-		if entry.Type()&os.ModeSymlink != 0 {
-			return nil, fmt.Errorf("workspace collection contains symlink %q", entry.Name())
-		}
-		if entry.IsDir() {
-			if _, ok := manifest.Workspaces[entry.Name()]; !ok {
-				return nil, fmt.Errorf("workspace directory %q is not declared in %s", entry.Name(), absolute)
-			}
-		}
-	}
 	set := &Set{ManifestPath: absolute}
 	for _, key := range manifest.Keys() {
 		if selected != "" && selected != key {
 			continue
 		}
-		directory := filepath.Join(root, "workspaces", key)
+		directory := filepath.Join(root, key)
 		if err := CheckDirectory(root, directory); err != nil {
 			return nil, fmt.Errorf("workspace %q: %w", key, err)
 		}

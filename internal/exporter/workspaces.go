@@ -48,11 +48,7 @@ func (e WorkspaceExporter) Export(options Options) (WorkspaceResult, error) {
 	if err == nil && previous == nil {
 		return WorkspaceResult{}, fmt.Errorf("output contains a single-workspace manifest; export the workspace set into a different directory")
 	}
-	if previous == nil {
-		if _, err := os.Lstat(filepath.Join(absolute, "workspaces")); !os.IsNotExist(err) {
-			return WorkspaceResult{}, fmt.Errorf("refusing to replace workspaces/ without a workspace-set manifest")
-		}
-	} else if previous.Secrets == "omit" {
+	if previous != nil && previous.Secrets == "omit" {
 		options.WithoutSecrets = true
 	}
 
@@ -96,6 +92,27 @@ func (e WorkspaceExporter) Export(options Options) (WorkspaceResult, error) {
 			return WorkspaceResult{}, fmt.Errorf("previously exported workspace %q is no longer accessible; archive its directory and remove its manifest entry explicitly before refreshing", key)
 		}
 	}
+	if _, err := os.Lstat(absolute); err == nil {
+		if err := workspace.CheckLayout(absolute, &manifest); err != nil {
+			return WorkspaceResult{}, err
+		}
+	} else if !os.IsNotExist(err) {
+		return WorkspaceResult{}, err
+	}
+	// Root directories not owned by the previous routing manifest must never
+	// be adopted/overwritten merely because a new workspace has the same slug.
+	for _, key := range manifest.Keys() {
+		if previous != nil {
+			if _, owned := previous.Workspaces[key]; owned {
+				continue
+			}
+		}
+		if _, err := os.Lstat(filepath.Join(absolute, key)); err == nil {
+			return WorkspaceResult{}, fmt.Errorf("refusing to replace unowned workspace directory %q; use a different output directory or move the conflicting path", key)
+		} else if !os.IsNotExist(err) {
+			return WorkspaceResult{}, err
+		}
+	}
 	if err := os.MkdirAll(filepath.Dir(absolute), 0755); err != nil {
 		return WorkspaceResult{}, err
 	}
@@ -104,14 +121,13 @@ func (e WorkspaceExporter) Export(options Options) (WorkspaceResult, error) {
 		return WorkspaceResult{}, err
 	}
 	defer os.RemoveAll(staging)
-	if err := os.MkdirAll(filepath.Join(staging, "workspaces"), 0755); err != nil {
-		return WorkspaceResult{}, err
-	}
 	if previous != nil {
-		// Preserve non-generated per-workspace files and resource grouping. The
-		// ordinary installer refreshes only generated paths inside this copy.
-		if err := copyWorkspaceTree(filepath.Join(absolute, "workspaces"), filepath.Join(staging, "workspaces")); err != nil {
-			return WorkspaceResult{}, err
+		// Copy only bound workspace directories, not .git or unrelated root
+		// directories. Keep per-workspace notes and resource grouping.
+		for _, key := range previous.Keys() {
+			if err := copyWorkspaceTree(filepath.Join(absolute, key), filepath.Join(staging, key)); err != nil {
+				return WorkspaceResult{}, err
+			}
 		}
 	}
 	result := WorkspaceResult{Result: Result{OutputDir: absolute}, Workspaces: len(available)}
@@ -124,7 +140,7 @@ func (e WorkspaceExporter) Export(options Options) (WorkspaceResult, error) {
 		if err != nil {
 			return WorkspaceResult{}, fmt.Errorf("workspace %q: %w", key, err)
 		}
-		target := filepath.Join(staging, "workspaces", key)
+		target := filepath.Join(staging, key)
 		if err := preserveSnapshotDirectories(target, &snap); err != nil {
 			return WorkspaceResult{}, fmt.Errorf("workspace %q: %w", key, err)
 		}
@@ -157,7 +173,7 @@ func (e WorkspaceExporter) Export(options Options) (WorkspaceResult, error) {
 	if _, err := workspace.Load(filepath.Join(staging, "multica.yaml"), config.LoadOptions{}); err != nil {
 		return WorkspaceResult{}, fmt.Errorf("validate generated workspace set: %w", err)
 	}
-	if err := installWorkspaceSet(staging, absolute, options.Force); err != nil {
+	if err := installWorkspaceSet(staging, absolute, options.Force, manifest.Keys()); err != nil {
 		return WorkspaceResult{}, err
 	}
 	return result, nil
@@ -197,9 +213,10 @@ func copyWorkspaceTree(source, destination string) error {
 	})
 }
 
-// Install only the two generated root paths. Keep unrelated root files/.git;
-// roll back on ordinary install errors and retain backups if recovery fails.
-func installWorkspaceSet(staging, target string, force bool) error {
+// Install the root manifest and its explicitly bound workspace directories.
+// Keep unrelated root files/.git; roll back on ordinary install errors and
+// retain backups if recovery fails. Keys come from the validated manifest.
+func installWorkspaceSet(staging, target string, force bool, keys []string) error {
 	if err := validateTarget(target, force); err != nil {
 		return err
 	}
@@ -232,7 +249,7 @@ func installWorkspaceSet(staging, target string, force bool) error {
 		}
 		return errors.Join(errs...)
 	}
-	paths := []string{"multica.yaml", "workspaces"}
+	paths := append([]string{"multica.yaml"}, keys...)
 	for _, name := range paths {
 		destination := filepath.Join(target, name)
 		if _, err := os.Lstat(destination); os.IsNotExist(err) {

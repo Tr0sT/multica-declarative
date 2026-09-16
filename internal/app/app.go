@@ -30,7 +30,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	outputDir := flags.String("output-dir", "multica-export", "directory written by export")
 	force := flags.Bool("force", false, "replace generated export paths")
 	withoutSecrets := flags.Bool("without-secrets", false, "omit agent env, MCP, runtime config and custom args during export; leave them unmanaged during validate/plan/apply")
-	allWorkspaces := flags.Bool("all-workspaces", false, "export all accessible workspaces into workspaces/<slug>/")
+	allWorkspaces := flags.Bool("all-workspaces", false, "export all accessible workspaces into <slug>/ directly under the output directory")
 	profile := flags.String("profile", "", "Multica CLI profile for this invocation")
 	workspaceID := flags.String("workspace-id", "", "explicit target for a single-workspace declaration")
 	version := flags.Bool("version", false, "print version")

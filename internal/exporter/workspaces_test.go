@@ -47,6 +47,9 @@ func TestWorkspaceSetExportRoundTripsDuplicateNamesAndEmptyWorkspace(t *testing.
 				t.Fatal(err)
 			}
 			for _, entry := range set.Entries {
+				if entry.ConfigPath != filepath.Join(out, entry.Key, "multica.yaml") {
+					t.Fatalf("workspace not exported directly under root: %s", entry.ConfigPath)
+				}
 				if entry.Project.WithoutSecrets != withoutSecrets {
 					t.Fatal("secret policy lost")
 				}
@@ -60,7 +63,7 @@ func TestWorkspaceSetExportRoundTripsDuplicateNamesAndEmptyWorkspace(t *testing.
 					}
 				}
 			}
-			secret := filepath.Join(out, "workspaces/a/agents/unity-developer/custom-env.json")
+			secret := filepath.Join(out, "a/agents/unity-developer/custom-env.json")
 			info, statErr := os.Stat(secret)
 			if withoutSecrets {
 				if !os.IsNotExist(statErr) {
@@ -73,8 +76,11 @@ func TestWorkspaceSetExportRoundTripsDuplicateNamesAndEmptyWorkspace(t *testing.
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(entries) != 2 {
-				t.Fatalf("temporary files leaked into output: %v", entries)
+			if len(entries) != result.Workspaces+1 {
+				t.Fatalf("unexpected root layout: %v", entries)
+			}
+			if _, err := os.Lstat(filepath.Join(out, "workspaces")); !os.IsNotExist(err) {
+				t.Fatal("export created an unnecessary workspaces wrapper")
 			}
 		})
 	}
@@ -86,15 +92,15 @@ func TestWorkspaceSetForcePreservesGroupsNotesAndGit(t *testing.T) {
 	if _, err := ex.Export(Options{OutputDir: out}); err != nil {
 		t.Fatal(err)
 	}
-	old := filepath.Join(out, "workspaces/a/agents/unity-developer")
-	group := filepath.Join(out, "workspaces/a/agents/main")
+	old := filepath.Join(out, "a/agents/unity-developer")
+	group := filepath.Join(out, "a/agents/main")
 	if err := os.MkdirAll(group, 0755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Rename(old, filepath.Join(group, "unity-developer")); err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range []string{"README.md", ".git/HEAD", "workspaces/a/notes.md"} {
+	for _, path := range []string{"README.md", ".git/HEAD", "notes/readme.md", "a/notes.md"} {
 		target := filepath.Join(out, path)
 		if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
 			t.Fatal(err)
@@ -109,7 +115,7 @@ func TestWorkspaceSetForcePreservesGroupsNotesAndGit(t *testing.T) {
 	if _, err := ex.Export(Options{OutputDir: out, Force: true}); err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range []string{"README.md", ".git/HEAD", "workspaces/a/notes.md"} {
+	for _, path := range []string{"README.md", ".git/HEAD", "notes/readme.md", "a/notes.md"} {
 		data, err := os.ReadFile(filepath.Join(out, path))
 		if err != nil || string(data) != "keep" {
 			t.Fatalf("lost %s: %v", path, err)
@@ -138,7 +144,7 @@ func TestWorkspaceSetFailureDoesNotReplaceAnyExistingWorkspace(t *testing.T) {
 	if _, err := ex.Export(Options{OutputDir: out}); err != nil {
 		t.Fatal(err)
 	}
-	marker := filepath.Join(out, "workspaces/a/agents/unity-developer/AGENT.md")
+	marker := filepath.Join(out, "a/agents/unity-developer/AGENT.md")
 	if err := os.WriteFile(marker, []byte("keep old snapshot"), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -195,7 +201,7 @@ func TestWorkspaceSetDoesNotPruneInaccessibleWorkspace(t *testing.T) {
 	if _, err := ex.Export(Options{OutputDir: out, Force: true}); err == nil || !strings.Contains(err.Error(), "no longer accessible") {
 		t.Fatalf("err=%v", err)
 	}
-	if _, err := os.Stat(filepath.Join(out, "workspaces/b/multica.yaml")); err != nil {
+	if _, err := os.Stat(filepath.Join(out, "b/multica.yaml")); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -212,7 +218,7 @@ func TestWorkspaceSetForceKeepsOmitPolicyAndRemovesGeneratedSecrets(t *testing.T
 	if _, err := ex.Export(Options{OutputDir: out, Force: true}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(out, "workspaces/a/agents/unity-developer/custom-env.json")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(out, "a/agents/unity-developer/custom-env.json")); !os.IsNotExist(err) {
 		t.Fatal("force refresh reintroduced secrets")
 	}
 }
@@ -220,28 +226,97 @@ func TestWorkspaceSetForceKeepsOmitPolicyAndRemovesGeneratedSecrets(t *testing.T
 func TestWorkspaceSetInstallRollback(t *testing.T) {
 	root := t.TempDir()
 	target, staging := filepath.Join(root, "target"), filepath.Join(root, "staging")
-	if err := os.MkdirAll(filepath.Join(target, "workspaces"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(staging, 0755); err != nil {
-		t.Fatal(err)
-	}
-	for _, path := range []string{filepath.Join(target, "multica.yaml"), filepath.Join(target, "workspaces/keep.txt")} {
-		if err := os.WriteFile(path, []byte("old"), 0644); err != nil {
+	for _, path := range []string{filepath.Join(target, "a"), filepath.Join(target, "b"), filepath.Join(staging, "a")} {
+		if err := os.MkdirAll(path, 0755); err != nil {
 			t.Fatal(err)
 		}
 	}
-	// Missing staged workspaces forces a failure after installing the manifest.
-	if err := os.WriteFile(filepath.Join(staging, "multica.yaml"), []byte("new"), 0644); err != nil {
-		t.Fatal(err)
+	for _, path := range []string{"multica.yaml", "a/keep.txt", "b/keep.txt"} {
+		if err := os.WriteFile(filepath.Join(target, path), []byte("old"), 0644); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if err := installWorkspaceSet(staging, target, true); err == nil {
+	// Missing staged b forces a failure after installing the manifest and a.
+	for _, path := range []string{"multica.yaml", "a/keep.txt"} {
+		if err := os.WriteFile(filepath.Join(staging, path), []byte("new"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := installWorkspaceSet(staging, target, true, []string{"a", "b"}); err == nil {
 		t.Fatal("expected failed install")
 	}
-	for _, path := range []string{filepath.Join(target, "multica.yaml"), filepath.Join(target, "workspaces/keep.txt")} {
-		data, err := os.ReadFile(path)
+	for _, path := range []string{"multica.yaml", "a/keep.txt", "b/keep.txt"} {
+		data, err := os.ReadFile(filepath.Join(target, path))
 		if err != nil || string(data) != "old" {
 			t.Fatalf("rollback lost %s: %v", path, err)
 		}
+	}
+	if _, err := os.Stat(filepath.Join(staging, "a")); !os.IsNotExist(err) {
+		t.Fatal("test did not reach partial directory installation")
+	}
+}
+
+func TestWorkspaceSetExportRefusesUnownedRootDirectoryCollision(t *testing.T) {
+	for _, refresh := range []bool{false, true} {
+		t.Run(map[bool]string{false: "initial", true: "refresh"}[refresh], func(t *testing.T) {
+			ex, _ := workspaceExportFixture()
+			out := filepath.Join(t.TempDir(), "snapshot")
+			if refresh {
+				if _, err := ex.Export(Options{OutputDir: out}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := os.MkdirAll(filepath.Join(out, "notes"), 0755); err != nil {
+				t.Fatal(err)
+			}
+			marker := filepath.Join(out, "notes/keep.txt")
+			if err := os.WriteFile(marker, []byte("keep"), 0644); err != nil {
+				t.Fatal(err)
+			}
+			catalog := ex.Catalog.(workspaceCatalog)
+			catalog.items = append(catalog.items, backend.Workspace{ID: "ws-notes", Slug: "notes"})
+			ex.Catalog = catalog
+			ex.BackendFor = func(string) backend.Backend {
+				t.Fatal("collision must fail before reading workspace resources")
+				return nil
+			}
+			if _, err := ex.Export(Options{OutputDir: out, Force: true}); err == nil || !strings.Contains(err.Error(), "unowned") {
+				t.Fatalf("expected unowned-directory conflict, got %v", err)
+			}
+			data, err := os.ReadFile(marker)
+			if err != nil || string(data) != "keep" {
+				t.Fatal("unrelated directory was modified")
+			}
+		})
+	}
+}
+
+func TestWorkspaceSetRefreshKeepsRenamedRootDirectory(t *testing.T) {
+	ex, _ := workspaceExportFixture()
+	out := filepath.Join(t.TempDir(), "snapshot")
+	if _, err := ex.Export(Options{OutputDir: out}); err != nil {
+		t.Fatal(err)
+	}
+	manifest, err := workspace.Read(filepath.Join(out, "multica.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest.Workspaces["renamed"] = manifest.Workspaces["a"]
+	delete(manifest.Workspaces, "a")
+	if err := os.Rename(filepath.Join(out, "a"), filepath.Join(out, "renamed")); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeYAML(filepath.Join(out, "multica.yaml"), manifest); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ex.Export(Options{OutputDir: out, Force: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(out, "a")); !os.IsNotExist(err) {
+		t.Fatal("refresh discarded the directory-to-ID binding")
+	}
+	set, err := workspace.Load(filepath.Join(out, "renamed/multica.yaml"), config.LoadOptions{})
+	if err != nil || len(set.Entries) != 1 || set.Entries[0].ID != "ws-a" {
+		t.Fatalf("set=%#v err=%v", set, err)
 	}
 }

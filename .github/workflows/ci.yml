@@ -37,7 +37,7 @@ jobs:
       - name: Validate workspace-set examples without contacting Multica
         run: |
           ./bin/multica-declarative validate --config examples/workspace-set/multica.yaml
-          ./bin/multica-declarative validate --config examples/workspace-set/workspaces/experiments/multica.yaml
+          ./bin/multica-declarative validate --config examples/workspace-set/experiments/multica.yaml
       - name: Install pinned official CLI for compatibility tests
         run: |
           version=$(jq -r .version integration/multica.lock.json)

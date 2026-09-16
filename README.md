@@ -50,7 +50,7 @@ Multica
 ## Current support
 
 - strict workspace and resource YAML validation;
-- multi-workspace export into `workspaces/<slug>/` with explicit ID bindings and per-workspace plan/apply;
+- multi-workspace export into `<slug>/` directly under the export root, with explicit ID bindings and per-workspace plan/apply;
 - recursive agent, skill, squad, project, and autopilot discovery, allowing arbitrary grouping directories;
 - standard Agent Skills directories with `SKILL.md` and supporting text files;
 - agents with instructions, runtime and runtime config, model, reasoning level, concurrency,
@@ -136,7 +136,8 @@ multica-declarative plan --config ./multica-config/multica.yaml
 multica-declarative apply --config ./multica-config/multica.yaml
 ```
 
-A root manifest binds `workspaces/<slug>/multica.yaml` to explicit workspace IDs;
+A root manifest binds `<slug>/multica.yaml` to explicit workspace IDs. Workspace
+directories sit directly beside the root `multica.yaml`, without an extra wrapper;
 inside each directory, the ordinary `agents/`, `skills/`, `squads/`, `projects/`,
 and `autopilots/` layout is unchanged. All selected workspaces are planned before
 any are applied. Same-named resources in different workspaces remain independent.

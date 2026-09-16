@@ -113,13 +113,17 @@ func TestRealCLIWorkspaceSetExportUpdateAndIsolation(t *testing.T) {
 	for _, entry := range set.Entries {
 		assertNoop(t, cli.WithScope("", entry.ID), entry.Project)
 	}
+	child, err := workspace.Load(filepath.Join(out, "a/multica.yaml"), config.LoadOptions{})
+	if err != nil || len(child.Entries) != 1 || child.Entries[0].ID != workspaceID {
+		t.Fatalf("direct root child lost its binding: %#v %v", child, err)
+	}
 	mu.Lock()
 	before := len(updates)
 	mu.Unlock()
 	if before != 0 {
 		t.Fatal("export or plan mutated server")
 	}
-	file := filepath.Join(out, "workspaces/a/skills/shared/SKILL.md")
+	file := filepath.Join(out, "a/skills/shared/SKILL.md")
 	data, err := os.ReadFile(file)
 	if err != nil {
 		t.Fatal(err)

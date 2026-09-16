@@ -20,8 +20,8 @@ func appWorkspaceSet(t *testing.T) (string, *workspace.Set) {
 	path := filepath.Join(root, "multica.yaml")
 	write(t, path, "apiVersion: multica-declarative/v1alpha1\nworkspaces:\n  a: {id: ws-a}\n  b: {id: ws-b}\n")
 	for _, key := range []string{"a", "b"} {
-		write(t, filepath.Join(root, "workspaces", key, "multica.yaml"), "apiVersion: multica-declarative/v1alpha1\n")
-		write(t, filepath.Join(root, "workspaces", key, "skills/shared/SKILL.md"), "---\nname: shared\ndescription: Shared conventions.\n---\nContent "+key+".\n")
+		write(t, filepath.Join(root, key, "multica.yaml"), "apiVersion: multica-declarative/v1alpha1\n")
+		write(t, filepath.Join(root, key, "skills/shared/SKILL.md"), "---\nname: shared\ndescription: Shared conventions.\n---\nContent "+key+".\n")
 	}
 	set, err := workspace.Load(path, config.LoadOptions{})
 	if err != nil {
@@ -85,7 +85,7 @@ func (b *workspaceMemoryBackend) UpdateSkill(id string, in model.SkillInput) (mo
 
 func TestWorkspaceSetValidationIsOfflineAndChildIsPinned(t *testing.T) {
 	path, _ := appWorkspaceSet(t)
-	for _, selected := range []string{path, filepath.Join(filepath.Dir(path), "workspaces/b/multica.yaml")} {
+	for _, selected := range []string{path, filepath.Join(filepath.Dir(path), "b/multica.yaml")} {
 		var out, errout bytes.Buffer
 		code := Run([]string{"validate", "--config", selected, "--multica-bin", "/nonexistent/multica"}, &out, &errout)
 		if code != 0 || !strings.Contains(out.String(), "ws-b") {
@@ -185,11 +185,11 @@ func TestFlatExportCannotOverwriteSetOrRetargetChild(t *testing.T) {
 	if _, _, err := flatExportTarget(root, ""); err == nil {
 		t.Fatal("flat export accepted workspace-set root")
 	}
-	id, _, err := flatExportTarget(filepath.Join(root, "workspaces/b"), "")
+	id, _, err := flatExportTarget(filepath.Join(root, "b"), "")
 	if err != nil || id != "ws-b" {
 		t.Fatalf("id=%s err=%v", id, err)
 	}
-	if _, _, err := flatExportTarget(filepath.Join(root, "workspaces/b"), "ws-a"); err == nil {
+	if _, _, err := flatExportTarget(filepath.Join(root, "b"), "ws-a"); err == nil {
 		t.Fatal("child export was retargeted")
 	}
 }

@@ -27,24 +27,25 @@ or the daemon's watch list. Empty workspaces are represented too.
 ```text
 multica-config/
 ├── multica.yaml
-└── workspaces/
-    ├── hustlecastle/
-    │   ├── multica.yaml
-    │   ├── agents/
-    │   ├── skills/
-    │   ├── squads/
-    │   ├── projects/
-    │   └── autopilots/
-    └── experiments/
-        ├── multica.yaml
-        ├── agents/
-        ├── skills/
-        ├── squads/
-        ├── projects/
-        └── autopilots/
+├── hustlecastle/
+│   ├── multica.yaml
+│   ├── agents/
+│   ├── skills/
+│   ├── squads/
+│   ├── projects/
+│   └── autopilots/
+└── experiments/
+    ├── multica.yaml
+    ├── agents/
+    ├── skills/
+    ├── squads/
+    ├── projects/
+    └── autopilots/
 ```
 
-The root `multica.yaml` binds each directory to a workspace ID:
+Workspace directories live directly beside the root `multica.yaml`, with no
+intermediate collection directory. The root manifest binds each directory to a
+workspace ID:
 
 ```yaml
 apiVersion: multica-declarative/v1alpha1
@@ -56,12 +57,14 @@ workspaces:
     id: 22222222-2222-4222-8222-222222222222
 ```
 
-Each key identifies **exactly** `workspaces/<key>/multica.yaml`. Export initially
-uses the server workspace slug as the key. Keys are portable, lowercase directory
-components (letters, digits, `_`, `-`); paths, `..`, symlinks, duplicate IDs,
-unlisted workspace directories, nested sets, and unknown YAML fields are rejected.
-You can rename a directory and its root key together; refresh preserves the
-mapping by ID. Workspace IDs, not directory names, decide where writes go.
+Each key identifies **exactly** `<key>/multica.yaml` relative to the root manifest.
+Export initially uses the server workspace slug as the key. Keys are portable,
+lowercase directory components (letters, digits, `_`, `-`); paths, `..`, symlinks
+in managed paths, duplicate IDs, nested sets, and unknown YAML fields are rejected.
+A direct child with a `multica.yaml` must be listed in the root mapping; unrelated
+root directories without a manifest and hidden repository metadata such as `.git/`
+are ignored. You can rename a directory and its root key together; refresh preserves
+the mapping by ID. Workspace IDs, not directory names, decide where writes go.
 
 Child manifests use the unchanged single-workspace format (`apiVersion`,
 `runtimes`, optional `secrets`). Existing recursive grouping inside collections
@@ -94,9 +97,9 @@ Select just one workspace with its child manifest:
 
 ```bash
 multica-declarative plan --profile hustle \
-  --config ./multica-config/workspaces/experiments/multica.yaml
+  --config ./multica-config/experiments/multica.yaml
 multica-declarative apply --profile hustle \
-  --config ./multica-config/workspaces/experiments/multica.yaml
+  --config ./multica-config/experiments/multica.yaml
 ```
 
 A directly selected child retains its workspace ID **and the root's secrets
@@ -122,13 +125,15 @@ multica-declarative export --all-workspaces --profile hustle \
 
 Every workspace is staged and the complete set is validated **before** replacing
 existing output. An error while reading workspace B does not install a partially
-refreshed workspace A. The installer backs up the two generated root paths and
-rolls back on ordinary installation errors; failed recovery retains the backup
-for manual repair. This is not a crash-proof filesystem transaction, and concurrent
-exports to the same output directory are not supported.
+refreshed workspace A. The installer backs up the root manifest and each bound
+workspace directory and rolls back on ordinary installation errors; failed recovery
+retains the backup for manual repair. This is not a crash-proof filesystem transaction,
+and concurrent exports to the same output directory are not supported.
 
-Refresh preserves `.git/` and unrelated root files, per-workspace notes outside
-the generated collections, and grouping directories of existing declarations.
+Refresh preserves `.git/` and unrelated root files/directories, per-workspace notes
+outside the generated collections, and grouping directories of existing declarations.
+A new workspace slug cannot overwrite an existing root directory that was not bound
+in the previous manifest: export fails on that collision even with `--force`.
 Within each workspace, generated resource collections retain the existing export
 replacement semantics. Root `secrets: omit` remains effective on subsequent set
 refreshes even without repeating the flag; generated secret files are removed
@@ -136,7 +141,7 @@ when refreshing a full snapshot with `--without-secrets`.
 
 If a previously exported workspace disappears from the accessible list, refresh
 fails instead of silently deleting its local snapshot. To intentionally stop
-including it, archive its directory outside `workspaces/` and remove its root
+including it, archive its directory outside the export root and remove its root
 manifest entry. Undeclared server resources are still never pruned.
 
 Flat export cannot overwrite a set root, even with `--force`. A flat refresh of
@@ -161,5 +166,10 @@ permissions and other non-portable references, then review the plan. No name/slu
 fallback silently retargets an inaccessible ID.
 
 To migrate existing snapshots without re-exporting, put each existing snapshot
-under `workspaces/<key>/` and create the root routing manifest above. No changes
-to agent, skill, squad, project, or autopilot declarations are required.
+under `<key>/` directly beside the root routing manifest above. No changes to agent,
+skill, squad, project, or autopilot declarations are required.
+
+Snapshots from the earlier revision of this PR used an extra `workspaces/` directory.
+Move its workspace directories up one level (checking for name collisions first)
+and remove the empty wrapper, or export into a new directory. The root mapping and
+workspace IDs do not need to change.
