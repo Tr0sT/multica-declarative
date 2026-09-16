@@ -149,10 +149,12 @@ type skillFrontmatter struct {
 	Metadata    map[string]any `yaml:"metadata"`
 }
 
-// LoadOptions can only restrict secret handling; it cannot override a snapshot's
-// secrets: omit policy. The zero value retains the existing full-snapshot behavior.
+// LoadOptions cannot override a snapshot's secrets: omit policy. The zero value
+// retains the existing full-snapshot behavior and rejects empty declarations.
 type LoadOptions struct {
 	WithoutSecrets bool
+	// AllowEmpty is used for explicitly bound children of workspace sets.
+	AllowEmpty bool
 }
 
 func Load(workspacePath string) (model.Project, error) {
@@ -231,7 +233,7 @@ func LoadWithOptions(workspacePath string, options LoadOptions) (model.Project, 
 	if err := loadWorkspaceResources(base, &project); err != nil {
 		return model.Project{}, err
 	}
-	if err := validate(project); err != nil {
+	if err := validateWithOptions(project, options); err != nil {
 		return model.Project{}, err
 	}
 	return project, nil
@@ -502,7 +504,7 @@ func loadSquad(path string) (model.SquadSpec, error) {
 		seenMembers[memberKey] = struct{}{}
 		members = append(members, v)
 	}
-	return model.SquadSpec{Name: name, Description: strings.TrimSpace(d.Description), Instructions: instructions, Leader: leader, AvatarURL: strings.TrimSpace(d.AvatarURL), Members: members}, nil
+	return model.SquadSpec{Name: name, Description: strings.TrimSpace(d.Description), Instructions: instructions, Leader: leader, AvatarURL: d.AvatarURL, Members: members}, nil
 }
 
 func loadSkill(directory string) (model.SkillSpec, error) {
@@ -556,10 +558,14 @@ func loadSkill(directory string) (model.SkillSpec, error) {
 }
 
 func validate(p model.Project) error {
+	return validateWithOptions(p, LoadOptions{})
+}
+
+func validateWithOptions(p model.Project, options LoadOptions) error {
 	if err := validateWorkspaceReferences(p); err != nil {
 		return err
 	}
-	if len(p.Skills)+len(p.Agents)+len(p.Squads)+len(p.Projects)+len(p.Autopilots) == 0 {
+	if !options.AllowEmpty && len(p.Skills)+len(p.Agents)+len(p.Squads)+len(p.Projects)+len(p.Autopilots) == 0 {
 		return fmt.Errorf("workspace must declare at least one resource")
 	}
 	skills := map[string]struct{}{}
