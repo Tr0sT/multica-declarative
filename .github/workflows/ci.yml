@@ -22,12 +22,22 @@ jobs:
           cache: true
       - run: go mod download
       - name: Check formatting
-        run: test -z "$(gofmt -l .)"
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            printf 'Files requiring gofmt:\n%s\n' "$unformatted"
+            gofmt -d .
+            exit 1
+          fi
       - run: go vet ./...
       - run: go test -race ./...
       - run: go build -o ./bin/multica-declarative ./cmd/multica-declarative
       - run: ./bin/multica-declarative --version
       - run: ./bin/multica-declarative validate --config examples/basic/multica.yaml
+      - name: Validate workspace-set examples without contacting Multica
+        run: |
+          ./bin/multica-declarative validate --config examples/workspace-set/multica.yaml
+          ./bin/multica-declarative validate --config examples/workspace-set/experiments/multica.yaml
       - name: Install pinned official CLI for compatibility tests
         run: |
           version=$(jq -r .version integration/multica.lock.json)

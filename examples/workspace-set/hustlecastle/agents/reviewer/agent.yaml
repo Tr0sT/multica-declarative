@@ -1,0 +1,6 @@
+name: Reviewer
+instructions: Review the assigned change using the workspace's code-review skill.
+skills:
+  - code-review
+multica:
+  unbound: true
