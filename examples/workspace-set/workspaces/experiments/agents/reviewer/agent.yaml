@@ -1,0 +1,6 @@
+name: Reviewer
+instructions: Review prototype changes using this workspace's experimental checklist.
+skills:
+  - code-review
+multica:
+  unbound: true

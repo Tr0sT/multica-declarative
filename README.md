@@ -3,7 +3,7 @@
 **Manage Multica agents, skills, squads, projects, and autopilots as code.**
 
 `multica-declarative` is a standalone Go CLI that reads version-controlled YAML and
-[Agent Skills](https://agentskills.io/) directories, compares them with a Multica workspace,
+[Agent Skills](https://agentskills.io/) directories, compares them with one or more Multica workspaces,
 and reconciles the difference through the official `multica` CLI.
 
 The reconciler does not access Multica's database or bypass its CLI for HTTP mutations.
@@ -50,6 +50,7 @@ Multica
 ## Current support
 
 - strict workspace and resource YAML validation;
+- multi-workspace export into `workspaces/<slug>/` with explicit ID bindings and per-workspace plan/apply;
 - recursive agent, skill, squad, project, and autopilot discovery, allowing arbitrary grouping directories;
 - standard Agent Skills directories with `SKILL.md` and supporting text files;
 - agents with instructions, runtime and runtime config, model, reasoning level, concurrency,
@@ -125,6 +126,29 @@ directly under its collection directory using a generated slug.
 
 `--force` replaces only generated `multica.yaml`, `agents/`, `skills/`, `squads/`, `projects/`, and `autopilots/` paths.
 Unrelated files and `.git/` are preserved.
+
+## Multiple workspaces
+
+```bash
+multica-declarative export --all-workspaces --output-dir ./multica-config
+multica-declarative validate --config ./multica-config/multica.yaml
+multica-declarative plan --config ./multica-config/multica.yaml
+multica-declarative apply --config ./multica-config/multica.yaml
+```
+
+A root manifest binds `workspaces/<slug>/multica.yaml` to explicit workspace IDs;
+inside each directory, the ordinary `agents/`, `skills/`, `squads/`, `projects/`,
+and `autopilots/` layout is unchanged. All selected workspaces are planned before
+any are applied. Same-named resources in different workspaces remain independent.
+Empty workspaces are exported too. No `workspace switch` is performed.
+
+Use `--profile <name>` to select a Multica installation/profile and
+`--without-secrets` to omit secret-bearing settings across the set. A selected
+child manifest retains the parent workspace binding and secret policy. Plain
+`export` and existing single-workspace declarations keep their previous behavior.
+Workspace creation, membership, and runtime provisioning are not managed.
+See [multi-workspace usage and migration](docs/workspaces.md) and
+[the example workspace set](examples/workspace-set).
 
 ## Commands
 

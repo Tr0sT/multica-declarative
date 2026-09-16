@@ -12,6 +12,7 @@ import (
 	"github.com/Tr0sT/multica-declarative/internal/exporter"
 	"github.com/Tr0sT/multica-declarative/internal/model"
 	"github.com/Tr0sT/multica-declarative/internal/reconcile"
+	"github.com/Tr0sT/multica-declarative/internal/workspace"
 )
 
 var Version = "0.5.0-dev"
@@ -24,11 +25,14 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	}
 	flags := flag.NewFlagSet("multica-declarative", flag.ContinueOnError)
 	flags.SetOutput(stderr)
-	configPath := flags.String("config", "multica.yaml", "path to workspace manifest")
+	configPath := flags.String("config", "multica.yaml", "path to workspace or workspace-set manifest")
 	binary := flags.String("multica-bin", "multica", "Multica CLI binary")
 	outputDir := flags.String("output-dir", "multica-export", "directory written by export")
 	force := flags.Bool("force", false, "replace generated export paths")
 	withoutSecrets := flags.Bool("without-secrets", false, "omit agent env, MCP, runtime config and custom args during export; leave them unmanaged during validate/plan/apply")
+	allWorkspaces := flags.Bool("all-workspaces", false, "export all accessible workspaces into workspaces/<slug>/")
+	profile := flags.String("profile", "", "Multica CLI profile for this invocation")
+	workspaceID := flags.String("workspace-id", "", "explicit target for a single-workspace declaration")
 	version := flags.Bool("version", false, "print version")
 	flags.Usage = func() {
 		fmt.Fprintln(stderr, "Usage: multica-declarative [flags] <export|validate|plan|apply>")
@@ -52,17 +56,69 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		flags.Usage()
 		return 2
 	}
-	cli := backend.NewCLI(*binary)
+	invalidScope := false
+	flags.Visit(func(f *flag.Flag) {
+		if (f.Name == "profile" || f.Name == "workspace-id") && strings.TrimSpace(f.Value.String()) == "" {
+			fmt.Fprintf(stderr, "error: --%s must not be empty\n", f.Name)
+			invalidScope = true
+		}
+	})
+	if invalidScope {
+		return 2
+	}
+	if *allWorkspaces && (command != "export" || *workspaceID != "") {
+		fmt.Fprintln(stderr, "error: --all-workspaces is only valid with export and cannot be combined with --workspace-id")
+		return 2
+	}
+	rawCLI := backend.NewCLI(*binary)
+	cli := rawCLI.WithScope(*profile, *workspaceID)
 	if command == "export" {
-		result, err := (exporter.Exporter{Backend: cli}).Export(exporter.Options{OutputDir: *outputDir, Force: *force, WithoutSecrets: *withoutSecrets})
+		options := exporter.Options{OutputDir: *outputDir, Force: *force, WithoutSecrets: *withoutSecrets}
+		if *allWorkspaces {
+			ex := exporter.WorkspaceExporter{
+				Catalog:    rawCLI.WithScope(*profile, ""),
+				BackendFor: func(id string) backend.Backend { return rawCLI.WithScope(*profile, id) },
+			}
+			result, err := ex.Export(options)
+			if err != nil {
+				fmt.Fprintf(stderr, "export failed: %v\n", err)
+				return 1
+			}
+			printExport(stdout, stderr, result.Result)
+			fmt.Fprintf(stdout, "Exported %d workspace(s) with explicit workspace bindings.\n", result.Workspaces)
+			return 0
+		}
+		id, omit, err := flatExportTarget(*outputDir, *workspaceID)
 		if err != nil {
 			fmt.Fprintf(stderr, "export failed: %v\n", err)
 			return 1
 		}
-		for _, w := range result.Warnings {
-			fmt.Fprintf(stderr, "warning: %s\n", w)
+		options.WithoutSecrets = options.WithoutSecrets || omit
+		cli = rawCLI.WithScope(*profile, id)
+		result, err := (exporter.Exporter{Backend: cli}).Export(options)
+		if err != nil {
+			fmt.Fprintf(stderr, "export failed: %v\n", err)
+			return 1
 		}
-		fmt.Fprintf(stdout, "Exported %d skill(s), %d agent(s), %d squad(s), %d project(s), %d autopilot(s), and %d runtime selector(s) to %s.\n", result.Skills, result.Agents, result.Squads, result.Projects, result.Autopilots, result.Runtimes, result.OutputDir)
+		printExport(stdout, stderr, result)
+		return 0
+	}
+	set, err := workspace.Load(*configPath, config.LoadOptions{WithoutSecrets: *withoutSecrets})
+	if err != nil {
+		fmt.Fprintf(stderr, "%s failed: %v\n", command, err)
+		return 1
+	}
+	if set != nil {
+		if *workspaceID != "" && (len(set.Entries) != 1 || set.Entries[0].ID != *workspaceID) {
+			fmt.Fprintln(stderr, "error: --workspace-id cannot override workspace-set bindings; select a child with --config instead")
+			return 2
+		}
+		catalog := rawCLI.WithScope(*profile, "")
+		factory := func(id string) backend.Backend { return rawCLI.WithScope(*profile, id) }
+		if err := runWorkspaceSet(command, set, catalog, factory, stdout, stderr); err != nil {
+			fmt.Fprintf(stderr, "%s failed: %v\n", command, err)
+			return 1
+		}
 		return 0
 	}
 	project, err := config.LoadWithOptions(*configPath, config.LoadOptions{WithoutSecrets: *withoutSecrets})
@@ -74,7 +130,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "notice: agent custom environment, MCP configuration, runtime config and custom arguments are unmanaged; existing values will not be changed")
 	}
 	if command == "validate" {
-		fmt.Fprintf(stdout, "Configuration is valid: %d skill(s), %d agent(s), %d squad(s), %d project(s), %d autopilot(s), %d runtime selector(s).\n", len(project.Skills), len(project.Agents), len(project.Squads), len(project.Projects), len(project.Autopilots), len(project.RuntimeSelectors))
+		printValidation(stdout, project)
 		return 0
 	}
 	controller := reconcile.Reconciler{Backend: cli}
@@ -99,6 +155,18 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 }
+
+func printValidation(w io.Writer, project model.Project) {
+	fmt.Fprintf(w, "Configuration is valid: %d skill(s), %d agent(s), %d squad(s), %d project(s), %d autopilot(s), %d runtime selector(s).\n", len(project.Skills), len(project.Agents), len(project.Squads), len(project.Projects), len(project.Autopilots), len(project.RuntimeSelectors))
+}
+
+func printExport(stdout, stderr io.Writer, result exporter.Result) {
+	for _, warning := range result.Warnings {
+		fmt.Fprintf(stderr, "warning: %s\n", warning)
+	}
+	fmt.Fprintf(stdout, "Exported %d skill(s), %d agent(s), %d squad(s), %d project(s), %d autopilot(s), and %d runtime selector(s) to %s.\n", result.Skills, result.Agents, result.Squads, result.Projects, result.Autopilots, result.Runtimes, result.OutputDir)
+}
+
 func printPlan(w io.Writer, changes []model.Change) {
 	counts := map[string]int{reconcile.Create: 0, reconcile.Update: 0, reconcile.Noop: 0}
 	for _, c := range changes {
@@ -117,7 +185,7 @@ func splitCommand(args []string) (string, []string, error) {
 			expects = false
 			continue
 		}
-		if a == "--config" || a == "--multica-bin" || a == "--output-dir" {
+		if a == "--config" || a == "--multica-bin" || a == "--output-dir" || a == "--profile" || a == "--workspace-id" {
 			remaining = append(remaining, a)
 			expects = true
 			continue
