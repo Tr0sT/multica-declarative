@@ -41,39 +41,40 @@ func TestRealCLIWorkspaceSetExportUpdateAndIsolation(t *testing.T) {
 			respond([]backend.Workspace{{ID: workspaceID, Slug: "a", Name: "A"}, {ID: secondWS, Slug: "b", Name: "B"}})
 			return
 		}
-		for id, sid := range skillIDs {
-			if r.URL.Path == "/api/skills/"+sid {
-				if r.Method == "PUT" {
-					var data map[string]any
-					if err := json.NewDecoder(r.Body).Decode(&data); err != nil {
-						t.Error(err)
-						http.Error(w, "invalid JSON", 400)
-						return
-					}
-					bodies[id] = data["content"].(string)
-					updates[id]++
-				} else if r.Method != "GET" {
-					t.Errorf("unexpected skill method %s", r.Method)
-					http.Error(w, "unexpected method", 500)
+		// Official Multica APIClient sends workspace scope in this header,
+		// including item requests; it is not a workspace_id query parameter.
+		id := r.Header.Get("X-Workspace-ID")
+		if _, ok := bodies[id]; !ok {
+			t.Errorf("request escaped explicit workspace binding: %s %s (workspace %q)", r.Method, r.URL.RequestURI(), id)
+			http.Error(w, "wrong workspace", 400)
+			return
+		}
+		sid := skillIDs[id]
+		if r.URL.Path == "/api/skills/"+sid {
+			if r.Method == "PUT" {
+				var data map[string]any
+				if err := json.NewDecoder(r.Body).Decode(&data); err != nil {
+					t.Error(err)
+					http.Error(w, "invalid JSON", 400)
 					return
 				}
-				respond(map[string]any{"id": sid, "name": "shared", "description": "Shared conventions.", "content": bodies[id], "files": []any{}})
+				bodies[id] = data["content"].(string)
+				updates[id]++
+			} else if r.Method != "GET" {
+				t.Errorf("unexpected skill method %s", r.Method)
+				http.Error(w, "unexpected method", 500)
 				return
 			}
-			if r.Method == "GET" && r.URL.Path == "/api/workspaces/"+id+"/mcp-servers" {
-				respond([]any{})
-				return
-			}
+			respond(map[string]any{"id": sid, "name": "shared", "description": "Shared conventions.", "content": bodies[id], "files": []any{}})
+			return
 		}
-		id := r.URL.Query().Get("workspace_id")
-		if _, ok := bodies[id]; !ok {
-			t.Errorf("request escaped explicit workspace binding: %s %s", r.Method, r.URL.RequestURI())
-			http.Error(w, "wrong workspace", 400)
+		if r.Method == "GET" && r.URL.Path == "/api/workspaces/"+id+"/mcp-servers" {
+			respond([]any{})
 			return
 		}
 		switch r.Method + " " + r.URL.Path {
 		case "GET /api/skills":
-			respond([]any{map[string]any{"id": skillIDs[id], "name": "shared", "description": "Shared conventions."}})
+			respond([]any{map[string]any{"id": sid, "name": "shared", "description": "Shared conventions."}})
 		case "GET /api/agents", "GET /api/runtimes", "GET /api/squads":
 			respond([]any{})
 		case "GET /api/projects":
@@ -81,7 +82,7 @@ func TestRealCLIWorkspaceSetExportUpdateAndIsolation(t *testing.T) {
 		case "GET /api/autopilots":
 			respond(map[string]any{"autopilots": []any{}, "total": 0})
 		default:
-			t.Errorf("unexpected request: %s %s", r.Method, r.URL.RequestURI())
+			t.Errorf("unexpected or cross-workspace request: %s %s", r.Method, r.URL.RequestURI())
 			http.Error(w, "unexpected request", 500)
 		}
 	}))
