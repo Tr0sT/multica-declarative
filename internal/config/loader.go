@@ -504,7 +504,7 @@ func loadSquad(path string) (model.SquadSpec, error) {
 		seenMembers[memberKey] = struct{}{}
 		members = append(members, v)
 	}
-	return model.SquadSpec{Name: name, Description: strings.TrimSpace(d.Description), Instructions: instructions, Leader: leader, AvatarURL: d.AvatarURL, Members: members}, nil
+	return model.SquadSpec{Name: name, Description: strings.TrimSpace(d.Description), Instructions: instructions, Leader: leader, AvatarURL: strings.TrimSpace(d.AvatarURL), Members: members}, nil
 }
 
 func loadSkill(directory string) (model.SkillSpec, error) {
