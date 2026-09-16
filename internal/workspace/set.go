@@ -34,7 +34,7 @@ type Manifest struct {
 
 type Entry struct {
 	Key, ID, ConfigPath string
-	Project            model.Project
+	Project             model.Project
 }
 
 type Set struct {
