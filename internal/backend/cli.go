@@ -174,10 +174,6 @@ func (c *CLI) SetAgentEnv(id, file string) error {
 	var raw json.RawMessage
 	return c.runJSON(&raw, "agent", "env", "set", id, "--custom-env-file", file, "--output", "json")
 }
-func (c *CLI) UploadAgentAvatar(id, file string) error {
-	var raw json.RawMessage
-	return c.runJSON(&raw, "agent", "avatar", id, "--file", file, "--output", "json")
-}
 func (c *CLI) ArchiveAgent(id string) error {
 	var raw json.RawMessage
 	return c.runJSON(&raw, "agent", "archive", id, "--output", "json")
@@ -221,8 +217,6 @@ func (c *CLI) UpdateSquad(id string, in model.SquadInput, fields []string) (mode
 			args = append(args, "--instructions", in.Instructions)
 		case "leader":
 			args = append(args, "--leader", in.LeaderID)
-		case "avatarUrl":
-			args = append(args, "--avatar-url", in.AvatarURL)
 		}
 	}
 	args = append(args, "--output", "json")

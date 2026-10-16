@@ -4,13 +4,11 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/Tr0sT/multica-declarative/internal/backend"
 	"github.com/Tr0sT/multica-declarative/internal/config"
@@ -56,8 +54,6 @@ type exportedSkill struct {
 type exportedAgent struct {
 	directory, instructions string
 	document                agentDocument
-	avatarName              string
-	avatar                  []byte
 	customEnv               map[string]string
 	mcpConfig               json.RawMessage
 }
@@ -109,8 +105,6 @@ type multicaDocument struct {
 	CustomArgs               []string                     `yaml:"customArgs,omitempty"`
 	CustomEnvFile            string                       `yaml:"customEnvFile,omitempty"`
 	MCPConfigFile            string                       `yaml:"mcpConfigFile,omitempty"`
-	AvatarFile               string                       `yaml:"avatarFile,omitempty"`
-	AvatarURL                *string                      `yaml:"avatarUrl,omitempty"`
 	Archived                 bool                         `yaml:"archived,omitempty"`
 	DisabledRuntimeSkills    []model.DisabledRuntimeSkill `yaml:"disabledRuntimeSkills,omitempty"`
 	ComposioToolkitAllowlist []string                     `yaml:"composioToolkitAllowlist,omitempty"`
@@ -120,7 +114,6 @@ type squadDocument struct {
 	Description      string                `yaml:"description,omitempty"`
 	InstructionsFile string                `yaml:"instructionsFile,omitempty"`
 	Leader           string                `yaml:"leader"`
-	AvatarURL        string                `yaml:"avatarUrl,omitempty"`
 	Members          []squadMemberDocument `yaml:"members,omitempty"`
 }
 type squadMemberDocument struct {
@@ -367,24 +360,6 @@ func (e Exporter) readSnapshot(options Options) (snapshot, error) {
 			ea.mcpConfig = append(json.RawMessage(nil), a.MCPConfig...)
 			ea.document.Multica.MCPConfigFile = mcpConfigFileName
 		}
-		if a.AvatarURL != nil && strings.HasPrefix(*a.AvatarURL, "emoji:") {
-			// Emoji avatars are references, not downloadable image URLs. Preserve
-			// every code point (including variation selectors and ZWJ sequences).
-			if err := model.ValidateAvatarURL(*a.AvatarURL); err != nil {
-				return snapshot{}, fmt.Errorf("agent %q: %w", a.Name, err)
-			}
-			value := *a.AvatarURL
-			ea.document.Multica.AvatarURL = &value
-		} else if a.AvatarURL != nil && *a.AvatarURL != "" {
-			data, name, downloadErr := e.downloadAvatar(*a.AvatarURL)
-			if downloadErr != nil {
-				warnings = append(warnings, fmt.Sprintf("agent %q avatar was not exported: %v", a.Name, downloadErr))
-			} else {
-				ea.avatar = data
-				ea.avatarName = name
-				ea.document.Multica.AvatarFile = name
-			}
-		}
 		agents = append(agents, ea)
 	}
 	squads := []exportedSquad{}
@@ -438,11 +413,7 @@ func (e Exporter) readSnapshot(options Options) (snapshot, error) {
 				return docs[i].Type+docs[i].Agent+docs[i].ID < docs[j].Type+docs[j].Agent+docs[j].ID
 			})
 			dir := uniqueSlug(s.Name, s.ID, used)
-			avatar := ""
-			if s.AvatarURL != nil {
-				avatar = *s.AvatarURL
-			}
-			sq := exportedSquad{directory: dir, instructions: s.Instructions, document: squadDocument{Name: s.Name, Description: s.Description, Leader: leader, AvatarURL: avatar, Members: docs}}
+			sq := exportedSquad{directory: dir, instructions: s.Instructions, document: squadDocument{Name: s.Name, Description: s.Description, Leader: leader, Members: docs}}
 			if s.Instructions != "" {
 				sq.document.InstructionsFile = "SQUAD.md"
 			}
@@ -466,46 +437,4 @@ func (e Exporter) readSnapshot(options Options) (snapshot, error) {
 func hasJSONValue(value json.RawMessage) bool {
 	trimmed := bytes.TrimSpace(value)
 	return len(trimmed) > 0 && !bytes.Equal(trimmed, []byte("null"))
-}
-
-func (e Exporter) downloadAvatar(url string) ([]byte, string, error) {
-	client := e.HTTPClient
-	if client == nil {
-		client = &http.Client{Timeout: 30 * time.Second}
-	}
-	resp, err := client.Get(url)
-	if err != nil {
-		return nil, "", err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, "", fmt.Errorf("HTTP %s", resp.Status)
-	}
-	data, err := io.ReadAll(io.LimitReader(resp.Body, 5<<20+1))
-	if err != nil {
-		return nil, "", err
-	}
-	if len(data) > 5<<20 {
-		return nil, "", fmt.Errorf("avatar exceeds 5 MB")
-	}
-	ext := avatarExtension(resp.Header.Get("Content-Type"), url)
-	return data, "avatar" + ext, nil
-}
-func avatarExtension(contentType, url string) string {
-	switch strings.Split(contentType, ";")[0] {
-	case "image/png":
-		return ".png"
-	case "image/jpeg":
-		return ".jpg"
-	case "image/gif":
-		return ".gif"
-	case "image/webp":
-		return ".webp"
-	}
-	ext := strings.ToLower(filepath.Ext(strings.Split(url, "?")[0]))
-	switch ext {
-	case ".png", ".jpg", ".jpeg", ".gif", ".webp":
-		return ext
-	}
-	return ".png"
 }

@@ -6,11 +6,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"slices"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/Tr0sT/multica-declarative/internal/backend"
 	"github.com/Tr0sT/multica-declarative/internal/model"
@@ -121,7 +119,7 @@ func (r Reconciler) inspect(project model.Project) (inspection, error) {
 			if err := validateObservedOnlyOnCreate(d); err != nil {
 				return state, err
 			}
-			if (!d.WithoutSecrets && d.ManageCustomEnv) || d.AvatarFile != "" || d.Archived {
+			if (!d.WithoutSecrets && d.ManageCustomEnv) || d.Archived {
 				if _, ok := r.Backend.(backend.AgentOperations); !ok {
 					return state, fmt.Errorf("backend cannot apply auxiliary fields for agent %q", d.Name)
 				}
@@ -150,7 +148,7 @@ func (r Reconciler) inspect(project model.Project) (inspection, error) {
 			if err := validateObservedOnlyChanges(d, a, skills); err != nil {
 				return state, err
 			}
-			if hasAnyField(fields, "customEnv", "archived") || (d.AvatarFile != "" && hasAnyField(fields, "avatar")) || (a.Archived() && requiresActiveAgent(fields)) {
+			if hasAnyField(fields, "customEnv", "archived") || (a.Archived() && requiresActiveAgent(fields)) {
 				if _, ok := r.Backend.(backend.AgentOperations); !ok {
 					return state, fmt.Errorf("backend cannot apply auxiliary fields for agent %q", d.Name)
 				}
@@ -216,9 +214,6 @@ func (r Reconciler) Apply(project model.Project, report func(model.Change)) erro
 	}
 	state, err := r.inspect(project)
 	if err != nil {
-		return err
-	}
-	if err := r.checkAvatarWrites(project, state); err != nil {
 		return err
 	}
 	skillIDs := map[string]string{}
@@ -313,20 +308,6 @@ func (r Reconciler) Apply(project model.Project, report func(model.Change)) erro
 				}
 			}
 		}
-		if d.AvatarURL != nil && (created || hasAnyField(change.Fields, "avatar")) {
-			ops := r.Backend.(backend.AgentAvatarReferences)
-			if err := ops.SetAgentAvatarURL(a.ID, *d.AvatarURL); err != nil {
-				return err
-			}
-		}
-		if d.AvatarFile != "" {
-			if created || hasAnyField(change.Fields, "avatar") {
-				ops := r.Backend.(backend.AgentOperations)
-				if err := ops.UploadAgentAvatar(a.ID, d.AvatarFile); err != nil {
-					return err
-				}
-			}
-		}
 		desiredArchived := d.Archived
 		if desiredArchived != a.Archived() || (desiredArchived && restoredForUpdate) {
 			ops, ok := r.Backend.(backend.AgentOperations)
@@ -369,9 +350,6 @@ func (r Reconciler) Apply(project model.Project, report func(model.Change)) erro
 				fields := []string{}
 				if d.Instructions != "" {
 					fields = append(fields, "instructions")
-				}
-				if d.AvatarURL != "" {
-					fields = append(fields, "avatarUrl")
 				}
 				if len(fields) > 0 {
 					updated, updateErr := ops.UpdateSquad(a.ID, squadInput(d, leaderID), fields)
@@ -470,28 +448,6 @@ func (r Reconciler) diffAgent(d model.AgentSpec, runtimeID string, a model.Agent
 			fields = append(fields, "customEnv")
 		}
 	}
-	if d.AvatarURL != nil {
-		actual := ""
-		if a.AvatarURL != nil {
-			actual = *a.AvatarURL
-		}
-		if *d.AvatarURL != actual {
-			fields = append(fields, "avatar")
-		}
-	}
-	if d.AvatarFile != "" {
-		if a.AvatarURL == nil || *a.AvatarURL == "" {
-			fields = append(fields, "avatar")
-		} else {
-			different, err := r.avatarDiffers(d.AvatarFile, *a.AvatarURL)
-			if err != nil {
-				return nil, err
-			}
-			if different {
-				fields = append(fields, "avatar")
-			}
-		}
-	}
 	if d.Archived != a.Archived() {
 		fields = append(fields, "archived")
 	}
@@ -505,34 +461,6 @@ func (r Reconciler) diffAgent(d model.AgentSpec, runtimeID string, a model.Agent
 		fields = append(fields, "composioToolkitAllowlist")
 	}
 	return fields, nil
-}
-
-func (r Reconciler) avatarDiffers(file, url string) (bool, error) {
-	if strings.HasPrefix(url, "emoji:") {
-		// Switching from an emoji to an image never needs an HTTP download.
-		return true, nil
-	}
-	local, err := os.ReadFile(file)
-	if err != nil {
-		return false, err
-	}
-	client := r.HTTPClient
-	if client == nil {
-		client = &http.Client{Timeout: 30 * time.Second}
-	}
-	resp, err := client.Get(url)
-	if err != nil {
-		return false, fmt.Errorf("download current avatar: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return false, fmt.Errorf("download current avatar: HTTP %s", resp.Status)
-	}
-	remote, err := io.ReadAll(io.LimitReader(resp.Body, 6<<20))
-	if err != nil {
-		return false, err
-	}
-	return !bytes.Equal(local, remote), nil
 }
 
 func syncSquadMembers(ops backend.SquadOperations, id string, d model.SquadSpec, agentIDs map[string]string, actual []model.SquadMember) error {
@@ -602,13 +530,6 @@ func diffSquad(d model.SquadSpec, a model.Squad, members []model.SquadMember, ag
 	}
 	if leaderID == "" || leaderID != a.LeaderID {
 		fields = append(fields, "leader")
-	}
-	avatar := ""
-	if a.AvatarURL != nil {
-		avatar = *a.AvatarURL
-	}
-	if d.AvatarURL != avatar {
-		fields = append(fields, "avatarUrl")
 	}
 	if !squadMembersMatch(d, members, agents) {
 		fields = append(fields, "members")
@@ -909,7 +830,7 @@ func agentInput(v model.AgentSpec, runtimeID string) model.AgentInput {
 	}
 }
 func squadInput(v model.SquadSpec, leaderID string) model.SquadInput {
-	return model.SquadInput{Name: v.Name, Description: v.Description, Instructions: v.Instructions, LeaderID: leaderID, AvatarURL: v.AvatarURL}
+	return model.SquadInput{Name: v.Name, Description: v.Description, Instructions: v.Instructions, LeaderID: leaderID}
 }
 func skillsNamed(items []model.Skill, name string) []model.Skill {
 	out := []model.Skill{}

@@ -177,11 +177,6 @@ func writeSnapshot(root string, v snapshot) error {
 		if err := os.WriteFile(filepath.Join(dir, "AGENT.md"), []byte(a.instructions), 0644); err != nil {
 			return err
 		}
-		if len(a.avatar) > 0 {
-			if err := os.WriteFile(filepath.Join(dir, a.avatarName), a.avatar, 0644); err != nil {
-				return err
-			}
-		}
 		if a.customEnv != nil {
 			if err := writeJSON(filepath.Join(dir, customEnvFileName), a.customEnv); err != nil {
 				return err

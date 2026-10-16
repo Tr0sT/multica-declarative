@@ -109,19 +109,21 @@ type agentDocument struct {
 	Multica          agentMulticaDocument     `yaml:"multica"`
 }
 type agentMulticaDocument struct {
-	Unbound                  bool                         `yaml:"unbound"`
-	ServiceTier              *string                      `yaml:"serviceTier"`
-	ConversationStarters     *[]model.ConversationStarter `yaml:"conversationStarters"`
-	SystemKey                *string                      `yaml:"systemKey"`
-	Runtime                  string                       `yaml:"runtime"`
-	RuntimeConfig            map[string]any               `yaml:"runtimeConfig"`
-	ThinkingLevel            string                       `yaml:"thinkingLevel"`
-	MaxConcurrentTasks       int                          `yaml:"maxConcurrentTasks"`
-	Permission               permissionDocument           `yaml:"permission"`
-	CustomArgs               []string                     `yaml:"customArgs"`
-	CustomEnvFile            string                       `yaml:"customEnvFile"`
-	MCPConfigFile            string                       `yaml:"mcpConfigFile"`
-	AvatarFile               string                       `yaml:"avatarFile"`
+	Unbound              bool                         `yaml:"unbound"`
+	ServiceTier          *string                      `yaml:"serviceTier"`
+	ConversationStarters *[]model.ConversationStarter `yaml:"conversationStarters"`
+	SystemKey            *string                      `yaml:"systemKey"`
+	Runtime              string                       `yaml:"runtime"`
+	RuntimeConfig        map[string]any               `yaml:"runtimeConfig"`
+	ThinkingLevel        string                       `yaml:"thinkingLevel"`
+	MaxConcurrentTasks   int                          `yaml:"maxConcurrentTasks"`
+	Permission           permissionDocument           `yaml:"permission"`
+	CustomArgs           []string                     `yaml:"customArgs"`
+	CustomEnvFile        string                       `yaml:"customEnvFile"`
+	MCPConfigFile        string                       `yaml:"mcpConfigFile"`
+	// Deprecated: accepted for old snapshots but deliberately ignored.
+	AvatarFile string `yaml:"avatarFile"`
+	// Deprecated: accepted for old snapshots but deliberately ignored.
 	AvatarURL                *string                      `yaml:"avatarUrl"`
 	Archived                 *bool                        `yaml:"archived"`
 	DisabledRuntimeSkills    []model.DisabledRuntimeSkill `yaml:"disabledRuntimeSkills"`
@@ -129,13 +131,14 @@ type agentMulticaDocument struct {
 }
 
 type squadDocument struct {
-	Name             string                `yaml:"name"`
-	Description      string                `yaml:"description"`
-	Instructions     string                `yaml:"instructions"`
-	InstructionsFile string                `yaml:"instructionsFile"`
-	Leader           string                `yaml:"leader"`
-	AvatarURL        string                `yaml:"avatarUrl"`
-	Members          []squadMemberDocument `yaml:"members"`
+	Name             string `yaml:"name"`
+	Description      string `yaml:"description"`
+	Instructions     string `yaml:"instructions"`
+	InstructionsFile string `yaml:"instructionsFile"`
+	Leader           string `yaml:"leader"`
+	// Deprecated: accepted for old snapshots but deliberately ignored.
+	AvatarURL string                `yaml:"avatarUrl"`
+	Members   []squadMemberDocument `yaml:"members"`
 }
 type squadMemberDocument struct {
 	Type  string `yaml:"type"`
@@ -388,21 +391,6 @@ func loadAgentWithOptions(path string, options LoadOptions) (model.AgentSpec, er
 		}
 		mcp = append([]byte(nil), data...)
 	}
-	if d.Multica.AvatarURL != nil {
-		if err := model.ValidateAvatarURL(*d.Multica.AvatarURL); err != nil {
-			return model.AgentSpec{}, fmt.Errorf("%s: %w", path, err)
-		}
-		if d.Multica.AvatarFile != "" {
-			return model.AgentSpec{}, fmt.Errorf("%s: avatarUrl and avatarFile are mutually exclusive", path)
-		}
-	}
-	avatarFile := ""
-	if strings.TrimSpace(d.Multica.AvatarFile) != "" {
-		avatarFile, err = resolvePath(filepath.Dir(path), d.Multica.AvatarFile)
-		if err != nil {
-			return model.AgentSpec{}, err
-		}
-	}
 	runtimeConfig := d.Multica.RuntimeConfig
 	if runtimeConfig == nil {
 		runtimeConfig = map[string]any{}
@@ -435,7 +423,7 @@ func loadAgentWithOptions(path string, options LoadOptions) (model.AgentSpec, er
 		PermissionMode: permissionMode, InvocationTargets: targets,
 		CustomArgs: customArgs, ManageCustomEnv: manageEnv, CustomEnv: customEnv,
 		CustomEnvFile: customEnvFile, ManageMCPConfig: manageMCP, MCPConfig: mcp,
-		MCPConfigFile: mcpFile, AvatarFile: avatarFile, AvatarURL: d.Multica.AvatarURL, Archived: archived,
+		MCPConfigFile: mcpFile, Archived: archived,
 		DisabledRuntimeSkills: disabled, ComposioToolkitAllowlist: allowlist,
 	}, nil
 }
@@ -504,7 +492,7 @@ func loadSquad(path string) (model.SquadSpec, error) {
 		seenMembers[memberKey] = struct{}{}
 		members = append(members, v)
 	}
-	return model.SquadSpec{Name: name, Description: strings.TrimSpace(d.Description), Instructions: instructions, Leader: leader, AvatarURL: strings.TrimSpace(d.AvatarURL), Members: members}, nil
+	return model.SquadSpec{Name: name, Description: strings.TrimSpace(d.Description), Instructions: instructions, Leader: leader, Members: members}, nil
 }
 
 func loadSkill(directory string) (model.SkillSpec, error) {
