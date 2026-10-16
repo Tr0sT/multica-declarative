@@ -3,7 +3,8 @@
 # Never replaces the installed CLI, server, daemon, configuration or credentials.
 set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-revision=76f59f5f1cd9b6e779d0d34c603407d5d4001bf7 # upstream v0.4.42
+version=0.6.2
+revision=7ab92d7622ecd81d179a8d83ae2dea74835a5069 # upstream v0.6.2
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 mkdir -p "$root/bin"
@@ -18,9 +19,13 @@ git -C "$work" apply "$root/compat/multica-avatar.patch"
   # Go downloads the upstream-required toolchain when necessary. Normal module
   # checksum verification stays enabled; no database or auth changes are made.
   GOTOOLCHAIN=auto CGO_ENABLED=0 go build -mod=readonly -trimpath \
-    -ldflags='-s -w -X main.version=0.4.42+avatar.1 -X main.commit=76f59f5+avatar' \
-    -o "$root/bin/multica-avatar" ./cmd/multica
+    -ldflags="-s -w -X main.version=${version}+avatar.1 -X main.commit=${revision:0:7}+avatar" \
+    -o "$work/multica-avatar" ./cmd/multica
 )
+# Do not replace a working compatibility binary when building or checking fails.
+"$work/multica-avatar" agent update --help | grep -F -- '--avatar-url' >/dev/null
 cp "$work/LICENSE" "$root/bin/multica-avatar.LICENSE"
 cp "$work/NOTICE" "$root/bin/multica-avatar.NOTICE"
-printf 'Built %s\n' "$root/bin/multica-avatar"
+mv "$work/multica-avatar" "$root/bin/multica-avatar"
+printf 'Built %s (%s+avatar.1)\n' "$root/bin/multica-avatar" "$version"
+printf 'Select it explicitly: multica-declarative --multica-bin "%s" apply --config /path/to/multica.yaml\n' "$root/bin/multica-avatar"

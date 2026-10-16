@@ -7,23 +7,26 @@
 and reconciles the difference through the official `multica` CLI.
 
 The reconciler does not access Multica's database or bypass its CLI for HTTP mutations.
-An optional, pinned CLI source patch supplies the missing emoji avatar setter in 0.4.42
+An optional, pinned CLI source patch supplies the emoji avatar setter still missing in 0.6.2
 (see [emoji avatars](docs/emoji-avatars.md)); the server and daemon are not changed. Git stores desired state and history; Multica remains responsible for runtime behavior.
 
 > Status: early MVP. The declaration format is `v1alpha1` and may change.
 >
-> Compatibility baseline: **Multica 0.4.42**, released September 9, 2026.
-> Version 0.5 requests full skill bodies directly through the official CLI;
-> no `--multica-bin` compatibility wrapper is needed. Existing declarations remain
+> Compatibility baseline: **Multica 0.6.2**, released October 13, 2026.
+> Full skill bodies are requested directly through the official CLI;
+> no compatibility wrapper is needed for skill reads. Existing declarations remain
 > valid. New agent fields are opt-in for older YAML; export preserves them explicitly.
-> See [compatibility boundaries](docs/managed-resources.md#multica-0442-compatibility-boundaries)
+> The managed resource schema is unchanged by this compatibility update; it does
+> not automatically enable every new upstream CLI feature.
+> See [managed resource boundaries](docs/managed-resources.md)
 > for read-only fields and resources that cannot be fully exported.
 >
-> Emoji avatars now export losslessly as `multica.avatarUrl: "emoji:🌞"`.
-> Stock 0.4.42 can export/compare these snapshots, but cannot restore a changed emoji.
-> For writes, build the opt-in CLI with `make avatar-cli` and pass
-> `--multica-bin /path/to/bin/multica-avatar`. An unsupported write fails before
-> any resource mutation. [Setup and migration](docs/emoji-avatars.md).
+> Emoji avatars export losslessly as `multica.avatarUrl: "emoji:🌞"`.
+> **Stock 0.6.2 still cannot restore a changed emoji.** Build the opt-in CLI with
+> `make build avatar-cli` and explicitly pass `--multica-bin /path/to/bin/multica-avatar`
+> to apply. Building it alone does not change which CLI is selected.
+> All selected workspaces are checked for required avatar-write support before
+> any resource mutation. [Setup and recovery](docs/emoji-avatars.md).
 
 
 ## Architecture
@@ -67,8 +70,9 @@ keys and a state file are added.
 
 ## Requirements
 
-- an authenticated **Multica 0.4.42** CLI and compatible server (the tested baseline);
-- Go 1.25+ only when building from source.
+- an authenticated **Multica 0.6.2** CLI and compatible server (the integration baseline);
+- the opt-in `multica-avatar` build for creating, changing, or clearing emoji avatars;
+- Go 1.25+ only when building the reconciler from source; the avatar CLI build auto-downloads the upstream-required toolchain.
 
 Verify the Multica profile first:
 
@@ -92,6 +96,9 @@ Or:
 ```bash
 go install github.com/Tr0sT/multica-declarative/cmd/multica-declarative@latest
 ```
+
+For restoring emoji avatars, build and explicitly select the compatibility CLI
+as described in [emoji avatars](docs/emoji-avatars.md).
 
 ## Bootstrap an existing workspace
 
@@ -139,9 +146,11 @@ multica-declarative apply --config ./multica-config/multica.yaml
 A root manifest binds `<slug>/multica.yaml` to explicit workspace IDs. Workspace
 directories sit directly beside the root `multica.yaml`, without an extra wrapper;
 inside each directory, the ordinary `agents/`, `skills/`, `squads/`, `projects/`,
-and `autopilots/` layout is unchanged. All selected workspaces are planned before
-any are applied. Same-named resources in different workspaces remain independent.
-Empty workspaces are exported too. No `workspace switch` is performed.
+and `autopilots/` layout is unchanged. All selected workspaces are planned and
+checked for required avatar-write support before any are applied. Same-named
+resources in different workspaces remain independent. Empty workspaces are
+exported too. No `workspace switch` is performed. Add the explicit `--multica-bin`
+argument shown above when the apply needs to restore emoji avatars.
 
 Use `--profile <name>` to select a Multica installation/profile and
 `--without-secrets` to omit secret-bearing settings across the set. A selected
@@ -238,12 +247,14 @@ Old declarations that omit these collections leave existing server resources unt
 ## Agents and squads
 
 See [docs/managed-resources.md](docs/managed-resources.md) for complete examples, secret-file rules,
-and a field-by-field compatibility table.
+and a field-by-field compatibility table. That table documents the managed schema established
+against 0.4.42; the 0.6.2 compatibility update preserves its observe-only fields rather than
+silently expanding what an existing declaration can mutate.
 
 Important compatibility boundary:
 
-- fields exposed by official CLI create/update commands are fully reconciled;
-- observable server fields without a CLI mutation command are exported and compared, but `apply`
+- fields exposed by official CLI create/update commands and implemented by the reconciler are fully reconciled;
+- observable server fields without implemented CLI mutation support are exported and compared, but `apply`
   rejects a requested change instead of bypassing the CLI.
 
 ## Safety model
@@ -255,7 +266,8 @@ Important compatibility boundary:
 - top-level pruning is not implemented;
 - secret values are exported to agent JSON files with local mode `0600` and are never printed in plans;
 - custom env and MCP values are passed to Multica by file, not embedded in process arguments;
-- unsupported or lossy operations fail explicitly.
+- unsupported or lossy operations fail explicitly;
+- workspace-set apply checks known capability failures before the first write, but is not transactional.
 
 ## Development
 
@@ -302,7 +314,7 @@ separate tests verify generated Multica CLI arguments and round-trip YAML behavi
 ## Principles
 
 - Desired state belongs in Git.
-- Multica remains unmodified.
+- Multica remains unmodified except for the explicitly selected CLI-only avatar compatibility patch.
 - The official CLI is the compatibility boundary.
 - Apply must converge.
 - Destructive and lossy behavior must be explicit.
