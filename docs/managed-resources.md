@@ -1,8 +1,13 @@
 # Managed Multica resources
 
-This document describes the resources and fields supported by `multica-declarative` v0.5 (tested with Multica 0.4.42).
-The official `multica` CLI remains the compatibility boundary. A field is never changed through
-direct database access or an undocumented HTTP endpoint.
+This document describes the resources and fields supported by `multica-declarative`.
+The current official-CLI integration baseline is Multica 0.6.2; the managed schema was
+established against 0.4.42. The official, unmodified `multica` CLI remains the compatibility
+boundary. A field is never changed through direct database access or an HTTP mutation bypass.
+
+Agent and squad avatars are intentionally excluded from declarative management. They are not
+exported, and legacy avatar fields are accepted but ignored without reading image files or
+changing live avatars. See [avatar policy and migration](emoji-avatars.md).
 
 ## Workspace manifest
 
@@ -66,7 +71,7 @@ multica:
 
   archived: false
 
-  # These fields are observable in the current CLI, but not mutable.
+  # These fields are observable, but not mutable through this reconciler.
   disabledRuntimeSkills:
     - runtimeId: 00000000-0000-0000-0000-000000000000
       provider: codex
@@ -87,21 +92,21 @@ multica:
 | serviceTier | yes | yes | Omitted = unmanaged; `""` = inherit local Codex configuration; `default` = Standard; other values come from the runtime catalog. |
 | conversationStarters | yes | observe-only | Ordered `label`/`prompt` entries. Omitted = unmanaged; explicit `[]` asserts empty. Changes/creation with non-empty starters fail before writes. |
 | systemKey | yes | observe-only | Product-managed identity, exported only when present. Cannot be changed or recreated as an ordinary agent. |
-| unbound | yes | existing agents only | Explicitly exports an agent whose runtime was removed. Cannot create/detach through this CLI; choosing `runtime` again supports rebinding. |
+| unbound | yes | existing agents only | Explicitly exports an agent whose runtime was removed. Cannot create/detach through this reconciler; choosing `runtime` again supports rebinding. |
 | customArgs | yes | yes | Exported verbatim with the rest of the declaration. |
 | private/workspace/member invocation permissions | yes | yes | Team targets are rejected because the CLI does not support them. |
 | skill assignments | yes | enabled skills only | Disabled assignments are exported and compared, but the CLI cannot change their enabled flag. |
 | customEnvFile | yes | yes | Export writes `custom-env.json` beside `agent.yaml`. Use `{}` to clear. |
 | mcpConfigFile | yes | yes | Export writes `mcp.json`; export fails if Multica returns a redacted config. A file containing `null` clears it. |
-| Avatars (emoji, URL, file) | Unmanaged: not exported; legacy fields are ignored; live avatars are unchanged. |
-| Avatars (emoji, URL, file) | Unmanaged: not exported; legacy fields are ignored; live avatars are unchanged. |
+| Avatars (emoji, URL, file) | omitted | unmanaged | Legacy `multica.avatarUrl` / `multica.avatarFile` are accepted but ignored. No avatar files are read and live avatars are unchanged. |
 | archived | yes | yes | Omitting `archived` declares an active agent (`false`). |
 | disabledRuntimeSkills | yes | observe-only | Apply fails clearly when a change is requested. |
 | composioToolkitAllowlist | yes | observe-only | Apply fails clearly when a change is requested. |
 
 Observe-only fields are preserved by `export` and checked during `plan`/`apply` preflight. They are not silently dropped.
-Creating an agent that requires a non-empty observe-only field is rejected, because the official CLI
-cannot faithfully reproduce it in a different workspace.
+Creating an agent that requires a non-empty observe-only field is rejected when the reconciler
+cannot faithfully reproduce it in a different workspace. Avatars are a deliberate exception:
+they are outside the managed schema rather than observe-only assertions.
 
 Empty `disabledRuntimeSkills` and `composioToolkitAllowlist` values may be omitted; omission declares
 an empty list and still participates in drift detection.
@@ -127,8 +132,9 @@ env endpoint or sent to mutation commands. The flag can also be passed to
 `mcpConfigFile` must contain a JSON object or `null`, matching the official CLI
 contract. Export writes both files with local
 mode `0600`; they are part of the desired state and should be committed with the agent declaration.
-All resource file references must be relative regular files inside their declaration directory;
-absolute paths, parent traversal, and symlinks are rejected.
+All managed resource file references must be relative regular files inside their declaration
+directory; absolute paths, parent traversal, and symlinks are rejected. Deprecated `avatarFile`
+values are not managed file references: they are ignored without resolving or reading the path.
 
 Do not put secret values in `customArgs` or `runtimeConfig`: the official Multica CLI accepts those
 fields only as command arguments. Use `customEnvFile` or `mcpConfigFile` for secret-bearing data.
@@ -152,10 +158,16 @@ members:
 ```
 
 The leader and agent members reference agents by declaration name. Human members use their Multica
-member UUID. `plan` and `apply` manage description, instructions, leader, avatar URL, member set,
+member UUID. `plan` and `apply` manage description, instructions, leader, member set,
 and member roles. A leader is always reconciled as an agent member with role `leader`.
+Squad avatars are unmanaged too: a legacy `avatarUrl` key is ignored, never exported,
+and never used to change or clear the live squad avatar.
 
 ## Multica 0.4.42 compatibility boundaries
+
+This section describes the historical schema baseline. Current integration tests use the official
+CLI version pinned in `integration/multica.lock.json`; updating that pin does not automatically
+expand the set of fields managed by the reconciler.
 
 The existing `v1alpha1` format remains valid. Newly introduced `serviceTier`,
 `conversationStarters`, and `systemKey` fields are unmanaged when absent, so an
@@ -181,12 +193,12 @@ validated and reconciled against the same unbound agent. To recreate or bind it,
 remove `unbound` and provide a runtime selector. Creating a product-managed agent
 with `systemKey` still requires Multica to provision that identity.
 
-The CLI can read conversation starters but has no create/update flag for them.
-They are kept as ordered `label`/`prompt` entries; at most three, with label and
-prompt limits of 80 and 4,000 Unicode code points. A requested difference in
-these or other observe-only fields fails preflight before any mutation rather
-than pretending it can be applied. Model IDs, thinking levels and service tiers
-are runtime-defined; validation does not replace the runtime's model catalog.
+Conversation starters remain observe-only in this reconciler. They are kept as
+ordered `label`/`prompt` entries; at most three, with label and prompt limits of
+80 and 4,000 Unicode code points. A requested difference in these or other
+observe-only fields fails preflight before any mutation rather than pretending
+it can be applied. Model IDs, thinking levels and service tiers are runtime-defined;
+validation does not replace the runtime's model catalog.
 
 Skill reads explicitly request `--with-content`. A missing/null body or file
 list is rejected before `plan`, `apply`, or export can treat it as empty data.
@@ -204,9 +216,10 @@ CLI lists only IDs, names and transports. That library and its per-agent
 assignments are outside this schema. Export emits a warning whenever the library
 is non-empty. Preserve their original configuration separately; this exporter
 cannot be used as a complete workspace backup. It also does not manage issues,
-projects, autopilots, chats, task history, or machine/runtime provisioning.
+chats, task history, or machine/runtime provisioning. Projects and autopilots
+are described separately below.
 
-Source contracts (pinned to the tested release):
+Historical source contracts (the original schema baseline):
 [skill content](https://github.com/multica-ai/multica/blob/v0.4.42/server/cmd/multica/cmd_skill.go),
 [agent flags](https://github.com/multica-ai/multica/blob/v0.4.42/server/cmd/multica/cmd_agent.go),
 [agent response and validation](https://github.com/multica-ai/multica/blob/v0.4.42/server/internal/handler/agent.go),
