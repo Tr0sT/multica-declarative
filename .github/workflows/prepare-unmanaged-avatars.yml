@@ -1,0 +1,39 @@
+name: Prepare unmanaged avatars
+
+on:
+  push:
+    branches: [fix/stock-cli-unmanaged-avatars]
+    paths:
+      - .github/scripts/prepare-unmanaged-avatars.py
+      - .github/workflows/prepare-unmanaged-avatars.yml
+
+permissions:
+  contents: write
+
+jobs:
+  prepare:
+    if: github.repository == 'Tr0sT/multica-declarative' && github.ref == 'refs/heads/fix/stock-cli-unmanaged-avatars'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version-file: go.mod
+      - name: Apply the scoped source change
+        run: |
+          python3 .github/scripts/prepare-unmanaged-avatars.py
+          gofmt -w internal integration
+          git diff --check
+          git diff --stat
+      - name: Commit only to the maintenance branch
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A internal integration docs README.md AGENTS.md Makefile compat scripts .github
+          git commit -m 'fix: leave avatars unmanaged and use only the stock Multica CLI'
+          git push origin HEAD:refs/heads/fix/stock-cli-unmanaged-avatars
+      - name: Show remaining avatar references for review
+        run: git grep -n -i avatar -- internal integration docs README.md Makefile .github || true
