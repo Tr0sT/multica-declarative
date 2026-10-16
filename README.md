@@ -7,26 +7,18 @@
 and reconciles the difference through the official `multica` CLI.
 
 The reconciler does not access Multica's database or bypass its CLI for HTTP mutations.
-An optional, pinned CLI source patch supplies the emoji avatar setter still missing in 0.6.2
-(see [emoji avatars](docs/emoji-avatars.md)); the server and daemon are not changed. Git stores desired state and history; Multica remains responsible for runtime behavior.
+Multica is used unmodified through its official CLI. Agent and squad avatars
+are intentionally excluded from export, plan and apply. Git stores desired state
+and history; Multica remains responsible for runtime behavior.
 
 > Status: early MVP. The declaration format is `v1alpha1` and may change.
 >
 > Compatibility baseline: **Multica 0.6.2**, released October 13, 2026.
-> Full skill bodies are requested directly through the official CLI;
-> no compatibility wrapper is needed for skill reads. Existing declarations remain
-> valid. New agent fields are opt-in for older YAML; export preserves them explicitly.
-> The managed resource schema is unchanged by this compatibility update; it does
-> not automatically enable every new upstream CLI feature.
-> See [managed resource boundaries](docs/managed-resources.md)
-> for read-only fields and resources that cannot be fully exported.
->
-> Emoji avatars export losslessly as `multica.avatarUrl: "emoji:🌞"`.
-> **Stock 0.6.2 still cannot restore a changed emoji.** Build the opt-in CLI with
-> `make build avatar-cli` and explicitly pass `--multica-bin /path/to/bin/multica-avatar`
-> to apply. Building it alone does not change which CLI is selected.
-> All selected workspaces are checked for required avatar-write support before
-> any resource mutation. [Setup and recovery](docs/emoji-avatars.md).
+> Existing declarations remain valid. Full skill bodies use the official CLI.
+> No custom CLI build or avatar patch is needed. Legacy `avatarUrl`/`avatarFile`
+> fields are accepted but ignored, without reading files or changing live avatars.
+> See [avatar policy and migration](docs/emoji-avatars.md) and
+> [managed resource boundaries](docs/managed-resources.md).
 
 
 ## Architecture
@@ -58,8 +50,8 @@ Multica
 - standard Agent Skills directories with `SKILL.md` and supporting text files;
 - agents with instructions, runtime and runtime config, model, reasoning level, concurrency,
   custom arguments, invocation permissions, skill assignments, custom env files, MCP config files,
-  avatars, archived/unbound state, service tier, and observe-only conversation starters/system identity;
-- squads with leader, instructions, avatar URL, agent/human members, and roles;
+  archived/unbound state, service tier, and observe-only conversation starters/system identity;
+- squads with leader, instructions, agent/human members, and roles;
 - projects with descriptions, leads, dates, resources, and autopilots with prompts, project/agent references, schedules/webhooks, and subscribers;
 - read-only export into round-trippable declarations;
 - reviewable `plan` output;
@@ -71,8 +63,7 @@ keys and a state file are added.
 ## Requirements
 
 - an authenticated **Multica 0.6.2** CLI and compatible server (the integration baseline);
-- the opt-in `multica-avatar` build for creating, changing, or clearing emoji avatars;
-- Go 1.25+ only when building the reconciler from source; the avatar CLI build auto-downloads the upstream-required toolchain.
+- Go 1.25+ only when building the reconciler from source.
 
 Verify the Multica profile first:
 
@@ -97,8 +88,7 @@ Or:
 go install github.com/Tr0sT/multica-declarative/cmd/multica-declarative@latest
 ```
 
-For restoring emoji avatars, build and explicitly select the compatibility CLI
-as described in [emoji avatars](docs/emoji-avatars.md).
+Avatars are not exported or imported. See [migration notes](docs/emoji-avatars.md) for old snapshots.
 
 ## Bootstrap an existing workspace
 
@@ -146,11 +136,9 @@ multica-declarative apply --config ./multica-config/multica.yaml
 A root manifest binds `<slug>/multica.yaml` to explicit workspace IDs. Workspace
 directories sit directly beside the root `multica.yaml`, without an extra wrapper;
 inside each directory, the ordinary `agents/`, `skills/`, `squads/`, `projects/`,
-and `autopilots/` layout is unchanged. All selected workspaces are planned and
-checked for required avatar-write support before any are applied. Same-named
+and `autopilots/` layout is unchanged. All selected workspaces are inspected before any are applied. Same-named
 resources in different workspaces remain independent. Empty workspaces are
-exported too. No `workspace switch` is performed. Add the explicit `--multica-bin`
-argument shown above when the apply needs to restore emoji avatars.
+exported too. No `workspace switch` is performed.
 
 Use `--profile <name>` to select a Multica installation/profile and
 `--without-secrets` to omit secret-bearing settings across the set. A selected
@@ -314,7 +302,7 @@ separate tests verify generated Multica CLI arguments and round-trip YAML behavi
 ## Principles
 
 - Desired state belongs in Git.
-- Multica remains unmodified except for the explicitly selected CLI-only avatar compatibility patch.
+- Multica remains unmodified. Avatars are intentionally unmanaged.
 - The official CLI is the compatibility boundary.
 - Apply must converge.
 - Destructive and lossy behavior must be explicit.

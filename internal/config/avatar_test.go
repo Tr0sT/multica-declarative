@@ -2,46 +2,34 @@ package config
 
 import (
 	"path/filepath"
-	"strconv"
 	"testing"
 )
 
-func TestAvatarURLDeclaration(t *testing.T) {
-	for _, value := range []string{"emoji:🌞", "emoji:👩🏽‍💻", "emoji:❤️", ""} {
-		t.Run(value, func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "agent.yaml")
-			writeFile(t, path, "name: Agent\nmultica:\n  runtime: r\n  avatarUrl: "+strconv.Quote(value)+"\n")
-			a, err := loadAgent(path)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if a.AvatarURL == nil || *a.AvatarURL != value || a.AvatarFile != "" {
-				t.Fatalf("avatar changed: %#v", a)
-			}
-		})
-	}
-}
-
-func TestAvatarURLOmissionDoesNotManageAvatar(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "agent.yaml")
-	writeFile(t, path, "name: Agent\nmultica:\n  runtime: r\n")
-	a, err := loadAgent(path)
-	if err != nil || a.AvatarURL != nil {
-		t.Fatalf("%#v %v", a, err)
-	}
-}
-
-func TestRejectsInvalidOrConflictingAvatarReferences(t *testing.T) {
+func TestLegacyAvatarFieldsAreAcceptedButIgnored(t *testing.T) {
 	for _, fields := range []string{
-		`avatarUrl: "emoji:"`, `avatarUrl: "emoji: "`, `avatarUrl: "emoji:🌞\n"`,
-		`avatarUrl: "file:/etc/passwd"`, `avatarUrl: "https://example.invalid/pic.png"`,
-		"avatarUrl: \"emoji:🌞\"\n  avatarFile: avatar.png", "avatarUrl: \"\"\n  avatarFile: avatar.png",
+		"  avatarUrl: \"emoji:👩🏽‍💻\"\n",
+		"  avatarUrl: \"emoji:\"\n",
+		"  avatarUrl: \"\"\n",
+		"  avatarUrl: null\n",
+		"  avatarUrl: https://example.invalid/avatar.png\n",
+		"  avatarFile: missing.png\n",
+		"  avatarFile: /nonexistent/avatar.png\n",
+		"  avatarFile: ../../missing.png\n  avatarUrl: \"emoji:old\"\n",
 	} {
 		t.Run(fields, func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "agent.yaml")
-			writeFile(t, path, "name: Agent\nmultica:\n  runtime: r\n  "+fields+"\n")
-			if _, err := loadAgent(path); err == nil {
-				t.Fatal("invalid avatar accepted")
+			root := t.TempDir()
+			manifest := filepath.Join(root, "multica.yaml")
+			writeFile(t, manifest, "apiVersion: multica-declarative/v1alpha1\nruntimes:\n  r: {id: runtime-1}\n")
+			writeFile(t, filepath.Join(root, "agents/a/agent.yaml"), "name: A\nmultica:\n  runtime: r\n"+fields)
+			writeFile(t, filepath.Join(root, "squads/s/squad.yaml"), "name: S\nleader: A\navatarUrl: https://example.invalid/old.png\n")
+			for _, withoutSecrets := range []bool{false, true} {
+				p, err := LoadWithOptions(manifest, LoadOptions{WithoutSecrets: withoutSecrets})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if p.Agents[0].AvatarURL != nil || p.Agents[0].AvatarFile != "" || p.Squads[0].AvatarURL != "" {
+					t.Fatal("legacy avatars became desired state")
+				}
 			}
 		})
 	}

@@ -23,7 +23,6 @@ type Backend interface {
 type AgentOperations interface {
 	GetAgentEnv(agentID string) (map[string]string, error)
 	SetAgentEnv(agentID, file string) error
-	UploadAgentAvatar(agentID, file string) error
 	ArchiveAgent(agentID string) error
 	RestoreAgent(agentID string) error
 }

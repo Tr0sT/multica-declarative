@@ -69,21 +69,16 @@ func runWorkspaceSet(command string, set *workspace.Set, catalog backend.Workspa
 	}
 	controllers := make([]reconcile.Reconciler, len(set.Entries))
 	plans := make([][]model.Change, len(set.Entries))
-	// Preflight all workspaces, including required write capabilities, before
-	// the first write. Plan stays usable with a read-only/stock CLI. This is
-	// not a server transaction: failures/races during apply can still leave
-	// partial changes.
+	// Inspect all workspaces before the first write. Avatars are unmanaged.
+	// This is not a server transaction: later API failures or races can still
+	// leave partial changes.
 	for i, entry := range set.Entries {
 		b := factory(entry.ID)
 		if b == nil {
 			return fmt.Errorf("workspace %q has no backend", entry.Key)
 		}
 		controllers[i] = reconcile.Reconciler{Backend: b}
-		if command == "apply" {
-			plans[i], err = controllers[i].Preflight(entry.Project)
-		} else {
-			plans[i], err = controllers[i].Plan(entry.Project)
-		}
+		plans[i], err = controllers[i].Plan(entry.Project)
 		if err != nil {
 			return fmt.Errorf("workspace %q preflight: %w (no changes applied)", entry.Key, err)
 		}
