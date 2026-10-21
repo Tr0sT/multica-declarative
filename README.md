@@ -4,13 +4,13 @@
 
 `multica-declarative` is a standalone Go CLI that reads version-controlled YAML and
 [Agent Skills](https://agentskills.io/) directories, compares them with one or more Multica workspaces,
-and reconciles the difference through the official `multica` CLI.
+and reconciles the difference through the `multica` CLI.
 
-Core resources use the official CLI. The optional TeamBridge extension uses the
-authenticated public API of [Tr0sT's Multica fork](https://github.com/Tr0sT/multica),
-because that integration has no CLI commands. It is enabled only by an explicit
-export flag or declarations in `teambridge/`. No database access or Multica patches
-are needed. Agent and squad avatars
+Every resource is read and changed through CLI commands. Core resources work with
+the official CLI; the optional TeamBridge extension uses `multica teambridge` in
+[Tr0sT's Multica fork](https://github.com/Tr0sT/multica). It is enabled only by an
+explicit export flag or declarations in `teambridge/`. The reconciler makes no
+direct API or database calls. Agent and squad avatars
 are intentionally excluded from export, plan and apply. Git stores desired state
 and history; Multica remains responsible for runtime behavior.
 
@@ -18,7 +18,8 @@ and history; Multica remains responsible for runtime behavior.
 >
 > Compatibility baseline: **Multica 0.6.4**, released October 20, 2026.
 > Existing declarations remain valid. Full skill bodies use the official CLI.
-> No custom CLI build or avatar patch is needed. Legacy `avatarUrl`/`avatarFile`
+> Core resources need no custom CLI build. TeamBridge requires the fork's CLI
+> with `teambridge` commands. Legacy `avatarUrl`/`avatarFile`
 > fields are accepted but ignored, without reading files or changing live avatars.
 > See [avatar policy and migration](docs/emoji-avatars.md) and
 > [managed resource boundaries](docs/managed-resources.md).
@@ -26,24 +27,14 @@ and history; Multica remains responsible for runtime behavior.
 
 ## Architecture
 
-```text
-Git repository
-  ├── multica.yaml
-  ├── agents/
-  ├── skills/
-  ├── squads/
-  ├── projects/
-  └── autopilots/
-          │
-          ▼
-multica-declarative export / validate / plan / apply
-          │
-          ▼
-official multica CLI --output json
-          │
-          ▼
-Multica
-```
+Git holds `multica.yaml` and the `agents/`, `skills/`, `squads/`, `projects/`,
+`autopilots/` and optional `teambridge/` directories. Export reads the selected
+workspace through the CLI; plan compares it with those files; apply invokes CLI
+commands for the required changes. Validation runs locally without a server.
+
+The selected Multica CLI owns authentication and network access. The official
+binary supports core resources, and the fork's binary adds the TeamBridge
+commands. Both use `--output json` as the reconciler's interface.
 
 ## Current support
 
@@ -58,12 +49,12 @@ Multica
 - projects with descriptions, leads, dates, resources, and autopilots with prompts, project/agent references, schedules/webhooks, and subscribers;
 - read-only export into round-trippable declarations;
 - reviewable `plan` output;
-- convergent `apply` through the official CLI.
+- convergent `apply` through the selected Multica CLI.
 
 Optional [TeamBridge support](docs/teambridge.md) adds bot-to-agent bindings, server
 and bot identity, access modes and allowlists, conversation context, refusal text
-and image files. Existing declarations and ordinary exports make no integration
-API requests and remain compatible with upstream Multica.
+and image files. Existing declarations and ordinary exports invoke no integration
+commands and remain compatible with upstream Multica.
 
 Existing resources are currently matched by exact name. Renaming remains unsafe until stable external
 keys and a state file are added.
@@ -71,6 +62,8 @@ keys and a state file are added.
 ## Requirements
 
 - an authenticated **Multica 0.6.4** CLI and compatible server (the integration baseline);
+- for optional TeamBridge management, the [fork's CLI with `teambridge` commands](docs/teambridge.md#cli-requirements)
+  and a fork server with the integration enabled;
 - Go 1.25+ only when building the reconciler from source.
 
 Verify the Multica profile first:
@@ -130,14 +123,19 @@ relative directories are preserved, including grouping directories such as `agen
 directly under its collection directory using a generated slug.
 
 `--force` replaces only generated `multica.yaml`, `agents/`, `skills/`, `squads/`, `projects/`, and `autopilots/` paths.
+With `--with-teambridge`, it also replaces generated `teambridge/` content.
 Unrelated files and `.git/` are preserved.
 
 ### Include TeamBridge from the fork
 
+Use the fork's CLI on `PATH`, or select it with `--multica-bin`:
+
 ```bash
-multica-declarative export --with-teambridge --output-dir ./my-workspace
-multica-declarative plan --config ./my-workspace/multica.yaml
-multica-declarative apply --config ./my-workspace/multica.yaml
+/path/to/fork/multica teambridge list --output json
+multica-declarative export --multica-bin /path/to/fork/multica \
+  --with-teambridge --output-dir ./my-workspace
+multica-declarative plan --multica-bin /path/to/fork/multica --config ./my-workspace/multica.yaml
+multica-declarative apply --multica-bin /path/to/fork/multica --config ./my-workspace/multica.yaml
 ```
 
 The same export flag works with `--all-workspaces` and `--without-secrets`.
@@ -317,6 +315,11 @@ reconciliation, explicit service-tier clearing, legacy omission, unbound edits a
 rebinding, and fail-closed behavior for incomplete responses. CI downloads the
 pinned CLI, verifies its SHA-256, and runs these tests with the race detector.
 
+A separate integration job builds the fork revision pinned in
+`integration/multica-teambridge.lock.json` and checks TeamBridge export, image
+transfer and reconciliation through the real fork CLI. See
+[TeamBridge verification](docs/teambridge.md#verification).
+
 The backend is a Go interface. Reconciliation and export are unit-tested without a real workspace;
 separate tests verify generated Multica CLI arguments and round-trip YAML behavior.
 
@@ -332,9 +335,10 @@ separate tests verify generated Multica CLI arguments and round-trip YAML behavi
 ## Principles
 
 - Desired state belongs in Git.
-- Multica remains unmodified. Avatars are intentionally unmanaged.
-- The official CLI is the compatibility boundary for core resources; the optional
-  TeamBridge adapter has a separately documented public API contract.
+- Avatars are intentionally unmanaged.
+- The CLI is the compatibility boundary for all resources. Core resources work
+  with the official CLI; optional TeamBridge support uses the fork's documented
+  `teambridge` commands.
 - Apply must converge.
 - Destructive and lossy behavior must be explicit.
 - Secret material is declarative state stored in Git beside its agent; plans, logs, shell history,

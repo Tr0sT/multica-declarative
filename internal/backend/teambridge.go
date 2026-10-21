@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"mime/multipart"
 	"net/http"
 	"net/url"
+	"os"
 	"path"
+	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -25,45 +27,39 @@ var (
 
 var _ TeamBridgeOperations = (*CLI)(nil)
 
+// The optional integration uses the fork's CLI just like core resources. The
+// CLI owns authentication, workspace selection and all network communication.
 func (c *CLI) ListTeamBridgeInstallations() ([]model.TeamBridgeInstallation, error) {
-	connection, err := c.teamBridgeConnection()
-	if err != nil {
-		return nil, err
-	}
-	return connection.list()
-}
-
-func (c *teamBridgeConnection) installationsPath() string {
-	return "/api/workspaces/" + c.workspaceID + "/mattermost/installations"
-}
-
-func (c *teamBridgeConnection) list() ([]model.TeamBridgeInstallation, error) {
 	var wire struct {
 		Installations    *[]json.RawMessage `json:"installations"`
 		Configured       *bool              `json:"configured"`
 		InstallSupported *bool              `json:"install_supported"`
 	}
-	if err := c.jsonRequest(http.MethodGet, c.installationsPath(), nil, &wire); err != nil {
+	if err := c.teamBridgeJSON(&wire, "list", "--output", "json"); err != nil {
 		return nil, err
 	}
 	if wire.Installations == nil || wire.Configured == nil || wire.InstallSupported == nil {
-		return nil, fmt.Errorf("TeamBridge API returned an incomplete capability response")
+		return nil, fmt.Errorf("TeamBridge CLI returned an incomplete capability response")
 	}
 	if !*wire.Configured || !*wire.InstallSupported {
 		return nil, fmt.Errorf("TeamBridge integration is disabled or installation is unsupported on this Multica server; configure the fork's integration before using this extension")
 	}
 	result := make([]model.TeamBridgeInstallation, 0, len(*wire.Installations))
 	ids, agents := map[string]bool{}, map[string]bool{}
+	workspaceID := c.teamBridgeExplicitWorkspace()
 	for _, raw := range *wire.Installations {
-		installation, err := decodeTeamBridgeInstallation(raw, c.workspaceID)
+		item, err := decodeTeamBridgeInstallation(raw, workspaceID)
 		if err != nil {
 			return nil, err
 		}
-		if ids[installation.ID] || agents[installation.AgentID] {
-			return nil, fmt.Errorf("TeamBridge API returned duplicate installation or agent identities")
+		if ids[item.ID] || agents[item.AgentID] {
+			return nil, fmt.Errorf("TeamBridge CLI returned duplicate installation or agent identities")
 		}
-		ids[installation.ID], agents[installation.AgentID] = true, true
-		result = append(result, installation)
+		ids[item.ID], agents[item.AgentID] = true, true
+		// When workspace selection belongs to the CLI profile, still reject a
+		// response that mixes installations from multiple workspaces.
+		workspaceID = item.WorkspaceID
+		result = append(result, item)
 	}
 	return result, nil
 }
@@ -83,147 +79,18 @@ func (c *CLI) InstallTeamBridgeBot(agentID string, input model.TeamBridgeBotInpu
 		return model.TeamBridgeInstallation{}, err
 	}
 	body["server_url"], body["access_token"] = input.ServerURL, strings.TrimSpace(input.AccessToken)
-	connection, err := c.teamBridgeConnection()
-	if err != nil {
-		return model.TeamBridgeInstallation{}, err
-	}
-	if _, err := connection.list(); err != nil {
-		return model.TeamBridgeInstallation{}, err
-	}
 	var raw json.RawMessage
-	endpoint := "/api/workspaces/" + connection.workspaceID + "/mattermost/install?agent_id=" + url.QueryEscape(agentID)
-	if err := connection.jsonRequest(http.MethodPost, endpoint, body, &raw); err != nil {
+	if err := c.teamBridgeConfigJSON(&raw, body, "install", "--agent", agentID); err != nil {
 		return model.TeamBridgeInstallation{}, err
 	}
-	installed, err := decodeTeamBridgeInstallation(raw, connection.workspaceID)
+	item, err := decodeTeamBridgeInstallation(raw, c.teamBridgeExplicitWorkspace())
 	if err != nil {
 		return model.TeamBridgeInstallation{}, err
 	}
-	if installed.AgentID != agentID || installed.Status != "active" {
+	if item.AgentID != agentID || item.Status != "active" {
 		return model.TeamBridgeInstallation{}, fmt.Errorf("TeamBridge install returned an unexpected agent or inactive installation")
 	}
-	return installed, nil
-}
-
-// VerifyTeamBridgeBot performs read-only checks before a fresh installation.
-// A saved username must not silently grant access to a different account after
-// it has been renamed or reused on the same Mattermost server.
-func (c *CLI) VerifyTeamBridgeBot(input model.TeamBridgeBotInput, expectedBotID string, expectedUsers []model.TeamBridgeAllowedUser) error {
-	if teamBridgeTaskContext() {
-		return fmt.Errorf("TeamBridge administration is not available inside a Multica daemon task")
-	}
-	if err := validateTeamBridgeServerURL(input.ServerURL); err != nil {
-		return err
-	}
-	if !teamBridgeHeaderValue(input.AccessToken) {
-		return fmt.Errorf("TeamBridge verification requires a bot token supplied through an environment variable or file")
-	}
-	if expectedBotID != "" && !teamBridgeUserID.MatchString(expectedBotID) {
-		return fmt.Errorf("TeamBridge verification received an invalid expected bot ID")
-	}
-	// Images have not been uploaded during preflight, so their target IDs do
-	// not exist yet. Only access/context validation is relevant to this lookup.
-	verificationInput := input
-	verificationInput.DeniedReply = model.TeamBridgeDeniedReply{Mode: "text"}
-	settings, err := teamBridgeSettingsBody(verificationInput)
-	if err != nil {
-		return err
-	}
-	client := http.Client{}
-	if c.HTTPClient != nil {
-		client = *c.HTTPClient
-	}
-	if client.Timeout <= 0 {
-		client.Timeout = c.Timeout
-		if client.Timeout <= 0 {
-			client.Timeout = defaultTimeout
-		}
-	}
-	client.Jar = nil
-	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	type user struct {
-		ID       string `json:"id"`
-		Username string `json:"username"`
-		IsBot    bool   `json:"is_bot"`
-		DeleteAt int64  `json:"delete_at"`
-	}
-	var me user
-	if err := teamBridgeVerificationRequest(&client, input, http.MethodGet, "/users/me", nil, &me); err != nil {
-		return err
-	}
-	if !me.IsBot || me.DeleteAt != 0 || !teamBridgeUserID.MatchString(me.ID) || !teamBridgeUsername.MatchString(me.Username) || (expectedBotID != "" && me.ID != expectedBotID) {
-		return fmt.Errorf("TeamBridge token does not belong to the expected active bot account; nothing was changed")
-	}
-	if input.AccessMode != "allowlist" {
-		return nil
-	}
-	names := settings["allowed_usernames"].([]string)
-	if len(names) == 0 {
-		if len(expectedUsers) != 0 {
-			return fmt.Errorf("TeamBridge expected accounts do not match the requested empty allowlist")
-		}
-		return nil
-	}
-	var users []user
-	if err := teamBridgeVerificationRequest(&client, input, http.MethodPost, "/users/usernames", names, &users); err != nil {
-		return err
-	}
-	resolved := map[string]string{}
-	ids := map[string]bool{}
-	for _, account := range users {
-		if account.IsBot || account.DeleteAt != 0 || !teamBridgeUserID.MatchString(account.ID) || !teamBridgeUsername.MatchString(account.Username) || resolved[account.Username] != "" || ids[account.ID] {
-			return fmt.Errorf("TeamBridge lookup returned invalid or duplicate allowed accounts; nothing was changed")
-		}
-		resolved[account.Username] = account.ID
-		ids[account.ID] = true
-	}
-	if len(resolved) != len(names) {
-		return fmt.Errorf("TeamBridge could not resolve every allowed username; nothing was changed")
-	}
-	for _, name := range names {
-		if resolved[name] == "" {
-			return fmt.Errorf("TeamBridge could not resolve every allowed username; nothing was changed")
-		}
-	}
-	for _, expected := range expectedUsers {
-		name := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(expected.Username), "@"))
-		if resolved[name] == "" || (expected.ID != "" && resolved[name] != expected.ID) {
-			return fmt.Errorf("TeamBridge allowed username no longer identifies the exported account; update the declaration after checking the account identity; nothing was changed")
-		}
-	}
-	return nil
-}
-
-func teamBridgeVerificationRequest(client *http.Client, input model.TeamBridgeBotInput, method, endpoint string, body any, target any) error {
-	var data []byte
-	if body != nil {
-		var err error
-		data, err = json.Marshal(body)
-		if err != nil {
-			return fmt.Errorf("cannot encode TeamBridge account verification request")
-		}
-	}
-	request, err := http.NewRequest(method, strings.TrimRight(input.ServerURL, "/")+"/api/v4"+endpoint, bytes.NewReader(data))
-	if err != nil {
-		return fmt.Errorf("cannot construct TeamBridge account verification request")
-	}
-	request.Header.Set("Authorization", "Bearer "+strings.TrimSpace(input.AccessToken))
-	if body != nil {
-		request.Header.Set("Content-Type", "application/json")
-	}
-	response, err := client.Do(request)
-	if err != nil {
-		return fmt.Errorf("cannot verify TeamBridge accounts; the configured TeamBridge server must be reachable from this machine; nothing was changed")
-	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		return fmt.Errorf("TeamBridge account verification failed (HTTP %d); nothing was changed", response.StatusCode)
-	}
-	data, err = io.ReadAll(io.LimitReader(response.Body, (1<<20)+1))
-	if err != nil || len(data) > 1<<20 || json.Unmarshal(data, target) != nil {
-		return fmt.Errorf("TeamBridge account verification returned invalid JSON; nothing was changed")
-	}
-	return nil
+	return item, nil
 }
 
 func (c *CLI) UpdateTeamBridgeBot(id string, input model.TeamBridgeBotInput) error {
@@ -237,19 +104,15 @@ func (c *CLI) UpdateTeamBridgeBot(id string, input model.TeamBridgeBotInput) err
 	if err != nil {
 		return err
 	}
-	connection, err := c.teamBridgeConnection()
-	if err != nil {
-		return err
-	}
 	var raw json.RawMessage
-	if err := connection.jsonRequest(http.MethodPatch, connection.installationsPath()+"/"+id, body, &raw); err != nil {
+	if err := c.teamBridgeConfigJSON(&raw, body, "update", id); err != nil {
 		return err
 	}
-	installation, err := decodeTeamBridgeInstallation(raw, connection.workspaceID)
+	item, err := decodeTeamBridgeInstallation(raw, c.teamBridgeExplicitWorkspace())
 	if err != nil {
 		return err
 	}
-	if installation.ID != id || installation.Status != "active" {
+	if item.ID != id || item.Status != "active" {
 		return fmt.Errorf("TeamBridge update returned an unexpected or inactive installation")
 	}
 	return nil
@@ -259,11 +122,183 @@ func (c *CLI) RevokeTeamBridgeBot(id string) error {
 	if !teamBridgeUUID.MatchString(id) {
 		return fmt.Errorf("TeamBridge revoke requires a full installation UUID")
 	}
-	connection, err := c.teamBridgeConnection()
+	var response struct {
+		ID      string `json:"id"`
+		Revoked bool   `json:"revoked"`
+	}
+	if err := c.teamBridgeJSON(&response, "revoke", id, "--output", "json"); err != nil {
+		return err
+	}
+	if response.ID != id || !response.Revoked {
+		return fmt.Errorf("TeamBridge CLI did not confirm the requested revocation")
+	}
+	return nil
+}
+
+// Verification is a CLI read-only operation. Credentials travel in a private
+// config file, and the CLI verifies native bot/account IDs before installation.
+func (c *CLI) VerifyTeamBridgeBot(input model.TeamBridgeBotInput, expectedBotID string, expectedUsers []model.TeamBridgeAllowedUser) error {
+	if err := validateTeamBridgeServerURL(input.ServerURL); err != nil {
+		return err
+	}
+	if !teamBridgeHeaderValue(input.AccessToken) {
+		return fmt.Errorf("TeamBridge verification requires a bot token supplied through an environment variable or file")
+	}
+	if expectedBotID != "" && !teamBridgeUserID.MatchString(expectedBotID) {
+		return fmt.Errorf("TeamBridge verification received an invalid expected bot ID")
+	}
+	verificationInput := input
+	verificationInput.DeniedReply = model.TeamBridgeDeniedReply{Mode: "text"}
+	settings, err := teamBridgeSettingsBody(verificationInput)
 	if err != nil {
 		return err
 	}
-	return connection.jsonRequest(http.MethodDelete, connection.installationsPath()+"/"+id, nil, nil)
+	names, _ := settings["allowed_usernames"].([]string)
+	expected := map[string]model.TeamBridgeAllowedUser{}
+	for _, user := range expectedUsers {
+		user.Username = strings.ToLower(strings.TrimPrefix(strings.TrimSpace(user.Username), "@"))
+		if !teamBridgeUsername.MatchString(user.Username) || (user.ID != "" && !teamBridgeUserID.MatchString(user.ID)) {
+			return fmt.Errorf("TeamBridge verification received an invalid expected account")
+		}
+		if _, exists := expected[user.Username]; exists {
+			return fmt.Errorf("TeamBridge verification received duplicate expected accounts")
+		}
+		expected[user.Username] = user
+	}
+	users := make([]model.TeamBridgeAllowedUser, 0, len(names))
+	for _, name := range names {
+		user := expected[name]
+		user.Username = name
+		users = append(users, user)
+		delete(expected, name)
+	}
+	if len(expected) != 0 {
+		return fmt.Errorf("TeamBridge expected accounts do not match the requested allowlist")
+	}
+	body := struct {
+		ServerURL         string                        `json:"server_url"`
+		AccessToken       string                        `json:"access_token"`
+		ExpectedBotUserID string                        `json:"expected_bot_user_id,omitempty"`
+		AllowedUsers      []model.TeamBridgeAllowedUser `json:"allowed_users"`
+	}{input.ServerURL, strings.TrimSpace(input.AccessToken), expectedBotID, users}
+	var response struct {
+		Verified bool `json:"verified"`
+	}
+	if err := c.teamBridgeConfigJSON(&response, body, "verify"); err != nil {
+		return err
+	}
+	if !response.Verified {
+		return fmt.Errorf("TeamBridge CLI did not confirm bot/account verification")
+	}
+	return nil
+}
+
+func (c *CLI) teamBridgeExplicitWorkspace() string {
+	if scoped, ok := c.Runner.(scopeRunner); ok {
+		return scoped.workspaceID
+	}
+	return ""
+}
+
+// Never include command stderr, malformed JSON, or wrapped process errors in
+// TeamBridge diagnostics: a CLI/server error can echo a credential or signed URL.
+func (c *CLI) teamBridgeJSON(target any, args ...string) error {
+	data, err := c.execute(append([]string{"teambridge"}, args...)...)
+	if err != nil {
+		message := strings.ToLower(err.Error())
+		switch {
+		case strings.Contains(message, "unknown command"):
+			return fmt.Errorf("TeamBridge commands are unavailable in the selected Multica CLI; use --multica-bin with the compatible TeamBridge fork CLI")
+		case teamBridgeFailureStatus(message, "401"):
+			return fmt.Errorf("TeamBridge CLI authentication failed (HTTP 401); authenticate the selected Multica profile and check the supplied bot token for account verification")
+		case teamBridgeFailureStatus(message, "403"):
+			return fmt.Errorf("TeamBridge CLI was denied access (HTTP 403); check the selected profile, target workspace and required admin permissions")
+		case teamBridgeFailureStatus(message, "404"):
+			return fmt.Errorf("TeamBridge API or requested resource is unavailable (HTTP 404); use the compatible Multica fork server and CLI")
+		case teamBridgeFailureStatus(message, "409"):
+			return fmt.Errorf("TeamBridge installation conflict (HTTP 409); the bot may already be attached to another agent or workspace")
+		case strings.Contains(message, "token does not belong to the expected active bot"):
+			return fmt.Errorf("TeamBridge token does not belong to the expected active bot; supply the correct bot token before importing")
+		case strings.Contains(message, "username does not identify the expected active account"):
+			return fmt.Errorf("TeamBridge allowed username no longer identifies the exported account; check renamed or reused usernames before updating the declaration")
+		case strings.Contains(message, "could not verify all teambridge accounts"):
+			return fmt.Errorf("TeamBridge could not verify every allowed account; check usernames, account status and bot lookup permissions")
+		case strings.Contains(message, "integration is disabled or installation is unsupported"):
+			return fmt.Errorf("TeamBridge integration is disabled or installation is unsupported on this Multica server; configure the fork's integration before importing")
+		case strings.Contains(message, "timed out"):
+			return fmt.Errorf("TeamBridge CLI command timed out")
+		default:
+			return fmt.Errorf("TeamBridge CLI command failed; check fork compatibility, the selected profile, workspace permissions and configuration")
+		}
+	}
+	if len(data) == 0 || len(data) > 8<<20 || json.Unmarshal(data, target) != nil {
+		return fmt.Errorf("TeamBridge CLI returned invalid or oversized JSON")
+	}
+	return nil
+}
+
+func teamBridgeFailureStatus(message, status string) bool {
+	return strings.Contains(message, "http "+status) || strings.Contains(message, "returned "+status) || strings.Contains(message, "api error ("+status+")")
+}
+
+func (c *CLI) teamBridgeConfigJSON(target any, body any, args ...string) error {
+	data, err := json.Marshal(body)
+	if err != nil || len(data) > 32<<10 {
+		return fmt.Errorf("TeamBridge command configuration is invalid or exceeds 32 KiB")
+	}
+	dir, err := teamBridgeTempDir()
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	file := filepath.Join(dir, "config.json")
+	if err := teamBridgeWritePrivate(file, data); err != nil {
+		return err
+	}
+	args = append(args, "--config-file", file, "--output", "json")
+	return c.teamBridgeJSON(target, args...)
+}
+
+func teamBridgeTempDir() (string, error) {
+	dir, err := os.MkdirTemp("", "multica-teambridge-*")
+	if err != nil {
+		return "", fmt.Errorf("cannot create private TeamBridge command directory")
+	}
+	if err := os.Chmod(dir, 0700); err != nil {
+		_ = os.RemoveAll(dir)
+		return "", fmt.Errorf("cannot protect TeamBridge command directory")
+	}
+	absolute, err := filepath.Abs(dir)
+	if err != nil {
+		_ = os.RemoveAll(dir)
+		return "", fmt.Errorf("cannot resolve TeamBridge command directory")
+	}
+	return absolute, nil
+}
+
+func teamBridgeWritePrivate(file string, data []byte) error {
+	out, err := os.OpenFile(file, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
+		return fmt.Errorf("cannot create private TeamBridge command input")
+	}
+	_, writeErr := out.Write(data)
+	closeErr := out.Close()
+	if writeErr != nil || closeErr != nil {
+		return fmt.Errorf("cannot write private TeamBridge command input")
+	}
+	return nil
+}
+
+func teamBridgeHeaderValue(value string) bool {
+	if strings.TrimSpace(value) == "" {
+		return false
+	}
+	for _, char := range value {
+		if char < 0x20 || char == 0x7f {
+			return false
+		}
+	}
+	return true
 }
 
 func teamBridgeSettingsBody(input model.TeamBridgeBotInput) (map[string]any, error) {
@@ -305,16 +340,16 @@ func teamBridgeSettingsBody(input model.TeamBridgeBotInput) (map[string]any, err
 func decodeTeamBridgeInstallation(raw json.RawMessage, workspaceID string) (model.TeamBridgeInstallation, error) {
 	var fields map[string]json.RawMessage
 	if json.Unmarshal(raw, &fields) != nil {
-		return model.TeamBridgeInstallation{}, fmt.Errorf("TeamBridge API returned an invalid installation")
+		return model.TeamBridgeInstallation{}, fmt.Errorf("TeamBridge CLI returned an invalid installation")
 	}
 	for _, key := range []string{"id", "workspace_id", "agent_id", "server_url", "bot_user_id", "bot_username", "status", "context", "access_mode", "allowed_users", "denied_reply", "installer_user_id", "installed_at", "created_at", "updated_at"} {
 		if len(fields[key]) == 0 || bytes.Equal(bytes.TrimSpace(fields[key]), []byte("null")) {
-			return model.TeamBridgeInstallation{}, fmt.Errorf("TeamBridge API returned an installation without required field %s", key)
+			return model.TeamBridgeInstallation{}, fmt.Errorf("TeamBridge CLI returned an installation without required field %s", key)
 		}
 	}
 	var installation model.TeamBridgeInstallation
 	if json.Unmarshal(raw, &installation) != nil {
-		return model.TeamBridgeInstallation{}, fmt.Errorf("TeamBridge API returned invalid installation field types")
+		return model.TeamBridgeInstallation{}, fmt.Errorf("TeamBridge CLI returned invalid installation field types")
 	}
 	var wireContext struct {
 		Mode                  string `json:"mode"`
@@ -322,15 +357,15 @@ func decodeTeamBridgeInstallation(raw json.RawMessage, workspaceID string) (mode
 		ExtendedLookbackHours *int   `json:"extended_lookback_hours"`
 	}
 	if json.Unmarshal(fields["context"], &wireContext) != nil {
-		return model.TeamBridgeInstallation{}, fmt.Errorf("TeamBridge API returned invalid context settings")
+		return model.TeamBridgeInstallation{}, fmt.Errorf("TeamBridge CLI returned invalid context settings")
 	}
 	if wireContext.Mode == "channel_extended" {
 		if wireContext.ExtendedLookbackHours == nil || wireContext.LookbackHours != nil {
-			return model.TeamBridgeInstallation{}, fmt.Errorf("TeamBridge API returned incomplete extended history settings")
+			return model.TeamBridgeInstallation{}, fmt.Errorf("TeamBridge CLI returned incomplete extended history settings")
 		}
 		installation.Context = model.TeamBridgeContext{Mode: "channel", LookbackHours: *wireContext.ExtendedLookbackHours}
 	} else if wireContext.ExtendedLookbackHours != nil {
-		return model.TeamBridgeInstallation{}, fmt.Errorf("TeamBridge API returned ambiguous history settings")
+		return model.TeamBridgeInstallation{}, fmt.Errorf("TeamBridge CLI returned ambiguous history settings")
 	}
 	var reply struct {
 		Mode               string   `json:"mode"`
@@ -339,26 +374,27 @@ func decodeTeamBridgeInstallation(raw json.RawMessage, workspaceID string) (mode
 		ImageAttachmentIDs []string `json:"image_attachment_ids"`
 	}
 	if json.Unmarshal(fields["denied_reply"], &reply) != nil {
-		return model.TeamBridgeInstallation{}, fmt.Errorf("TeamBridge API returned invalid denied reply settings")
+		return model.TeamBridgeInstallation{}, fmt.Errorf("TeamBridge CLI returned invalid denied reply settings")
 	}
 	if reply.Mode == "image" {
 		if reply.ImageAttachmentID == "" || len(reply.ImageAttachmentIDs) != 0 {
-			return model.TeamBridgeInstallation{}, fmt.Errorf("TeamBridge API returned an incomplete single-image reply")
+			return model.TeamBridgeInstallation{}, fmt.Errorf("TeamBridge CLI returned an incomplete single-image reply")
 		}
 		installation.DeniedReply.Mode = "images"
 		installation.DeniedReply.ImageAttachmentIDs = []string{reply.ImageAttachmentID}
 	} else if reply.ImageAttachmentID != "" {
-		return model.TeamBridgeInstallation{}, fmt.Errorf("TeamBridge API returned ambiguous denied reply images")
+		return model.TeamBridgeInstallation{}, fmt.Errorf("TeamBridge CLI returned ambiguous denied reply images")
 	}
 	if !teamBridgeUUID.MatchString(installation.ID) || !teamBridgeUUID.MatchString(installation.AgentID) ||
-		!teamBridgeUUID.MatchString(installation.InstallerUserID) || installation.WorkspaceID != workspaceID {
-		return model.TeamBridgeInstallation{}, fmt.Errorf("TeamBridge API returned invalid identities or a different workspace")
+		!teamBridgeUUID.MatchString(installation.InstallerUserID) || !teamBridgeUUID.MatchString(installation.WorkspaceID) ||
+		(workspaceID != "" && installation.WorkspaceID != workspaceID) {
+		return model.TeamBridgeInstallation{}, fmt.Errorf("TeamBridge CLI returned invalid identities or a different workspace")
 	}
 	if !teamBridgeUserID.MatchString(installation.BotUserID) || !teamBridgeUsername.MatchString(installation.BotUsername) {
-		return model.TeamBridgeInstallation{}, fmt.Errorf("TeamBridge API returned an invalid bot identity")
+		return model.TeamBridgeInstallation{}, fmt.Errorf("TeamBridge CLI returned an invalid bot identity")
 	}
 	if installation.Status != "active" && installation.Status != "revoked" {
-		return model.TeamBridgeInstallation{}, fmt.Errorf("TeamBridge API returned an unsupported installation status")
+		return model.TeamBridgeInstallation{}, fmt.Errorf("TeamBridge CLI returned an unsupported installation status")
 	}
 	if err := validateTeamBridgeServerURL(installation.ServerURL); err != nil {
 		return model.TeamBridgeInstallation{}, err
@@ -370,21 +406,21 @@ func decodeTeamBridgeInstallation(raw json.RawMessage, workspaceID string) (mode
 		return model.TeamBridgeInstallation{}, err
 	}
 	if installation.AccessMode != "members" && installation.AccessMode != "anyone" && installation.AccessMode != "allowlist" {
-		return model.TeamBridgeInstallation{}, fmt.Errorf("TeamBridge API returned an unsupported access mode")
+		return model.TeamBridgeInstallation{}, fmt.Errorf("TeamBridge CLI returned an unsupported access mode")
 	}
 	if len(installation.AllowedUsers) > 100 {
-		return model.TeamBridgeInstallation{}, fmt.Errorf("TeamBridge API returned more than 100 allowed accounts")
+		return model.TeamBridgeInstallation{}, fmt.Errorf("TeamBridge CLI returned more than 100 allowed accounts")
 	}
 	ids, names := map[string]bool{}, map[string]bool{}
 	for _, user := range installation.AllowedUsers {
 		if !teamBridgeUserID.MatchString(user.ID) || !teamBridgeUsername.MatchString(user.Username) || ids[user.ID] || names[user.Username] {
-			return model.TeamBridgeInstallation{}, fmt.Errorf("TeamBridge API returned invalid or duplicate allowed accounts")
+			return model.TeamBridgeInstallation{}, fmt.Errorf("TeamBridge CLI returned invalid or duplicate allowed accounts")
 		}
 		ids[user.ID], names[user.Username] = true, true
 	}
 	for _, timestamp := range []string{installation.InstalledAt, installation.CreatedAt, installation.UpdatedAt} {
 		if _, err := time.Parse(time.RFC3339Nano, timestamp); err != nil {
-			return model.TeamBridgeInstallation{}, fmt.Errorf("TeamBridge API returned invalid installation timestamps")
+			return model.TeamBridgeInstallation{}, fmt.Errorf("TeamBridge CLI returned invalid installation timestamps")
 		}
 	}
 	return installation, nil
@@ -434,219 +470,103 @@ func validateTeamBridgeServerURL(raw string) error {
 	return nil
 }
 
-func (c *teamBridgeConnection) jsonRequest(method, endpoint string, body any, target any) error {
-	var data []byte
-	if body != nil {
-		var err error
-		data, err = json.Marshal(body)
-		if err != nil {
-			return fmt.Errorf("cannot encode TeamBridge API request")
-		}
-	}
-	request, err := http.NewRequest(method, c.baseURL+endpoint, bytes.NewReader(data))
-	if err != nil {
-		return fmt.Errorf("cannot construct TeamBridge API request")
-	}
-	c.setHeaders(request)
-	if body != nil {
-		request.Header.Set("Content-Type", "application/json")
-	}
-	response, err := c.client.Do(request)
-	if err != nil {
-		return fmt.Errorf("TeamBridge API request failed; check the Multica server connection")
-	}
-	defer response.Body.Close()
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return teamBridgeHTTPError(response.StatusCode)
-	}
-	if target == nil {
-		if method == http.MethodDelete && response.StatusCode != http.StatusNoContent {
-			return fmt.Errorf("TeamBridge revoke returned an unexpected success response; verify the installation status")
-		}
-		return nil
-	}
-	data, err = io.ReadAll(io.LimitReader(response.Body, (8<<20)+1))
-	if err != nil || len(data) > 8<<20 || json.Unmarshal(data, target) != nil {
-		return fmt.Errorf("TeamBridge API returned an invalid or oversized JSON response")
-	}
-	return nil
-}
-
-func (c *teamBridgeConnection) setHeaders(request *http.Request) {
-	request.Header.Set("Authorization", "Bearer "+c.token)
-	request.Header.Set("X-Workspace-ID", c.workspaceID)
-	request.Header.Set("X-Client-Platform", "cli")
-	request.Header.Set("X-Client-Capabilities", "stable_attachment_urls")
-}
-
-func teamBridgeHTTPError(status int) error {
-	switch status {
-	case http.StatusNotFound:
-		return fmt.Errorf("TeamBridge API or requested resource is unavailable (HTTP 404); this feature requires the compatible Multica fork")
-	case http.StatusUnauthorized, http.StatusForbidden:
-		return fmt.Errorf("TeamBridge API denied access (HTTP %d); check the selected profile and workspace admin permissions", status)
-	case http.StatusConflict:
-		return fmt.Errorf("TeamBridge API reported an installation conflict (HTTP 409); the bot may already belong to another agent or workspace")
-	default:
-		// Bodies and redirect URLs can echo credentials or signed object URLs.
-		return fmt.Errorf("TeamBridge API request failed (HTTP %d)", status)
-	}
+type teamBridgeImageMetadata struct {
+	ID          string `json:"id"`
+	Filename    string `json:"filename"`
+	ContentType string `json:"content_type"`
+	Size        *int64 `json:"size"`
+	Path        string `json:"path"`
 }
 
 func (c *CLI) DownloadTeamBridgeImage(id string) (model.TeamBridgeImage, error) {
 	if !teamBridgeUUID.MatchString(id) {
 		return model.TeamBridgeImage{}, fmt.Errorf("TeamBridge image download requires a full attachment UUID")
 	}
-	connection, err := c.teamBridgeConnection()
+	dir, err := teamBridgeTempDir()
 	if err != nil {
 		return model.TeamBridgeImage{}, err
 	}
-	var metadata struct {
-		ID            string  `json:"id"`
-		WorkspaceID   string  `json:"workspace_id"`
-		Filename      string  `json:"filename"`
-		DownloadURL   string  `json:"download_url"`
-		SizeBytes     *int64  `json:"size_bytes"`
-		IssueID       *string `json:"issue_id"`
-		CommentID     *string `json:"comment_id"`
-		ChatSessionID *string `json:"chat_session_id"`
-		ChatMessageID *string `json:"chat_message_id"`
-		TaskID        *string `json:"task_id"`
-	}
-	if err := connection.jsonRequest(http.MethodGet, "/api/attachments/"+id, nil, &metadata); err != nil {
+	defer os.RemoveAll(dir)
+	file := filepath.Join(dir, "image")
+	if err := teamBridgeWritePrivate(file, nil); err != nil {
 		return model.TeamBridgeImage{}, err
 	}
-	if metadata.ID != id || metadata.WorkspaceID != connection.workspaceID || metadata.SizeBytes == nil || *metadata.SizeBytes < 0 ||
-		*metadata.SizeBytes > model.MaxTeamBridgeImageBytes || metadata.DownloadURL == "" || metadata.Filename == "" ||
-		metadata.IssueID != nil || metadata.CommentID != nil || metadata.ChatSessionID != nil || metadata.ChatMessageID != nil || metadata.TaskID != nil {
-		return model.TeamBridgeImage{}, fmt.Errorf("TeamBridge reply image metadata is invalid or not a standalone image in the selected workspace")
+	var metadata teamBridgeImageMetadata
+	if err := c.teamBridgeJSON(&metadata, "image", "download", id, "--output-file", file, "--output", "json"); err != nil {
+		return model.TeamBridgeImage{}, err
 	}
-	data, err := connection.downloadImage(metadata.DownloadURL)
+	if metadata.ID != id || metadata.Path != file || metadata.Size == nil || *metadata.Size <= 0 || *metadata.Size > model.MaxTeamBridgeImageBytes {
+		return model.TeamBridgeImage{}, fmt.Errorf("TeamBridge CLI returned invalid image download metadata")
+	}
+	info, err := os.Lstat(file)
+	if err != nil || !info.Mode().IsRegular() || info.Size() != *metadata.Size {
+		return model.TeamBridgeImage{}, fmt.Errorf("TeamBridge CLI output is not a regular image file of the expected size")
+	}
+	// Windows FileMode permission bits do not describe ACL access. Keep the
+	// POSIX privacy check where those bits are meaningful.
+	if runtime.GOOS != "windows" && info.Mode().Perm()&0077 != 0 {
+		return model.TeamBridgeImage{}, fmt.Errorf("TeamBridge CLI image output is not private")
+	}
+	input, err := os.Open(file)
+	if err != nil {
+		return model.TeamBridgeImage{}, fmt.Errorf("cannot read TeamBridge CLI image output")
+	}
+	data, readErr := io.ReadAll(io.LimitReader(input, model.MaxTeamBridgeImageBytes+1))
+	closeErr := input.Close()
+	if readErr != nil || closeErr != nil || int64(len(data)) != *metadata.Size {
+		return model.TeamBridgeImage{}, fmt.Errorf("TeamBridge CLI image output is incomplete or oversized")
+	}
+	contentType, err := teamBridgeImageType(data)
 	if err != nil {
 		return model.TeamBridgeImage{}, err
 	}
-	if int64(len(data)) != *metadata.SizeBytes {
-		return model.TeamBridgeImage{}, fmt.Errorf("TeamBridge reply image download size does not match its metadata")
-	}
-	image := model.TeamBridgeImage{Filename: path.Base(strings.ReplaceAll(metadata.Filename, `\`, "/")), Data: data}
-	if image.Filename == "." || image.Filename == "/" || strings.ContainsAny(image.Filename, "\x00\r\n") {
-		return model.TeamBridgeImage{}, fmt.Errorf("TeamBridge reply image has an invalid filename")
-	}
-	image.ContentType, err = teamBridgeImageType(image.Data)
-	return image, err
-}
-
-func (c *teamBridgeConnection) downloadImage(rawURL string) ([]byte, error) {
-	u, err := url.Parse(rawURL)
-	if err != nil || u.User != nil || u.Fragment != "" {
-		return nil, fmt.Errorf("TeamBridge attachment has an invalid download URL")
-	}
-	relative := !u.IsAbs()
-	if relative {
-		if u.Host != "" || !strings.HasPrefix(rawURL, "/") || strings.HasPrefix(rawURL, "//") {
-			return nil, fmt.Errorf("TeamBridge attachment has an invalid relative download URL")
-		}
-		u, err = url.Parse(c.baseURL + rawURL)
-		if err != nil {
-			return nil, fmt.Errorf("TeamBridge attachment has an invalid download URL")
-		}
-	}
-	if err := validateTeamBridgeDownloadURL(u, strings.HasPrefix(c.baseURL, "https://")); err != nil {
-		return nil, err
-	}
-	request, err := http.NewRequest(http.MethodGet, u.String(), nil)
+	filename, err := teamBridgeImageFilename(metadata.Filename)
 	if err != nil {
-		return nil, fmt.Errorf("cannot construct TeamBridge image download")
+		return model.TeamBridgeImage{}, err
 	}
-	if relative {
-		c.setHeaders(request)
+	if metadata.ContentType != contentType {
+		return model.TeamBridgeImage{}, fmt.Errorf("TeamBridge CLI image content type does not match the file bytes")
 	}
-	client := *c.client
-	client.Jar = nil
-	client.CheckRedirect = func(next *http.Request, via []*http.Request) error {
-		if len(via) >= 10 {
-			return fmt.Errorf("too many attachment redirects")
-		}
-		if err := validateTeamBridgeDownloadURL(next.URL, via[len(via)-1].URL.Scheme == "https"); err != nil {
-			return err
-		}
-		// Signed downloads never need Multica credentials after a redirect.
-		next.Header.Del("Authorization")
-		next.Header.Del("X-Workspace-ID")
-		next.Header.Del("Cookie")
-		next.Header.Del("Referer")
-		return nil
-	}
-	response, err := client.Do(request)
-	if err != nil {
-		return nil, fmt.Errorf("TeamBridge image download failed; check attachment availability")
-	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("TeamBridge image download failed (HTTP %d)", response.StatusCode)
-	}
-	data, err := io.ReadAll(io.LimitReader(response.Body, model.MaxTeamBridgeImageBytes+1))
-	if err != nil || len(data) > model.MaxTeamBridgeImageBytes {
-		return nil, fmt.Errorf("TeamBridge image download failed or exceeds 5 MiB")
-	}
-	return data, nil
-}
-
-func validateTeamBridgeDownloadURL(u *url.URL, requireHTTPS bool) error {
-	if u.Hostname() == "" || u.User != nil || u.Fragment != "" || (u.Scheme != "http" && u.Scheme != "https") || (requireHTTPS && u.Scheme != "https") {
-		return fmt.Errorf("TeamBridge attachment has an unsafe download URL")
-	}
-	return nil
+	return model.TeamBridgeImage{Filename: filename, ContentType: contentType, Data: data}, nil
 }
 
 func (c *CLI) UploadTeamBridgeImage(image model.TeamBridgeImage) (string, error) {
-	if _, err := teamBridgeImageType(image.Data); err != nil {
-		return "", err
-	}
-	filename := path.Base(strings.ReplaceAll(image.Filename, `\`, "/"))
-	if filename == "" || filename == "." || filename == "/" || strings.ContainsAny(filename, "\x00\r\n") {
-		return "", fmt.Errorf("TeamBridge reply image requires a valid filename")
-	}
-	connection, err := c.teamBridgeConnection()
+	contentType, err := teamBridgeImageType(image.Data)
 	if err != nil {
 		return "", err
 	}
-	var body bytes.Buffer
-	writer := multipart.NewWriter(&body)
-	part, err := writer.CreateFormFile("file", filename)
+	if image.ContentType != "" && image.ContentType != contentType {
+		return "", fmt.Errorf("TeamBridge image content type does not match its bytes")
+	}
+	filename, err := teamBridgeImageFilename(image.Filename)
 	if err != nil {
-		return "", fmt.Errorf("cannot prepare TeamBridge image upload")
+		return "", err
 	}
-	if _, err := part.Write(image.Data); err != nil {
-		return "", fmt.Errorf("cannot prepare TeamBridge image upload")
-	}
-	if err := writer.Close(); err != nil {
-		return "", fmt.Errorf("cannot prepare TeamBridge image upload")
-	}
-	request, err := http.NewRequest(http.MethodPost, connection.baseURL+"/api/upload-file", &body)
+	dir, err := teamBridgeTempDir()
 	if err != nil {
-		return "", fmt.Errorf("cannot construct TeamBridge image upload")
+		return "", err
 	}
-	connection.setHeaders(request)
-	request.Header.Set("Content-Type", writer.FormDataContentType())
-	response, err := connection.client.Do(request)
-	if err != nil {
-		return "", fmt.Errorf("TeamBridge image upload failed; check the Multica server connection")
+	defer os.RemoveAll(dir)
+	file := filepath.Join(dir, filename)
+	if err := teamBridgeWritePrivate(file, image.Data); err != nil {
+		return "", err
 	}
-	defer response.Body.Close()
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return "", teamBridgeHTTPError(response.StatusCode)
+	var metadata teamBridgeImageMetadata
+	if err := c.teamBridgeJSON(&metadata, "image", "upload", file, "--output", "json"); err != nil {
+		return "", err
 	}
-	data, err := io.ReadAll(io.LimitReader(response.Body, (64<<10)+1))
-	var metadata struct {
-		ID          string `json:"id"`
-		WorkspaceID string `json:"workspace_id"`
-	}
-	if err != nil || len(data) > 64<<10 || json.Unmarshal(data, &metadata) != nil ||
-		!teamBridgeUUID.MatchString(metadata.ID) || metadata.WorkspaceID != connection.workspaceID {
-		return "", fmt.Errorf("TeamBridge image upload returned invalid attachment metadata")
+	if !teamBridgeUUID.MatchString(metadata.ID) || metadata.Size == nil || *metadata.Size != int64(len(image.Data)) || metadata.ContentType != contentType || metadata.Filename != filename {
+		return "", fmt.Errorf("TeamBridge CLI returned invalid image upload metadata")
 	}
 	return metadata.ID, nil
+}
+
+func teamBridgeImageFilename(value string) (string, error) {
+	filename := path.Base(strings.ReplaceAll(value, `\`, "/"))
+	if filename == "" || filename == "." || filename == ".." || filename == "/" || strings.ContainsAny(filename, "\x00\r\n") {
+		return "", fmt.Errorf("TeamBridge reply image requires a valid filename")
+	}
+	return filename, nil
 }
 
 func teamBridgeImageType(data []byte) (string, error) {

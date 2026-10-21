@@ -1,4 +1,4 @@
-.PHONY: build test vet fmt check integration
+.PHONY: build test vet fmt check integration integration-teambridge
 
 build:
 	go build -o ./bin/multica-declarative ./cmd/multica-declarative
@@ -21,3 +21,7 @@ check:
 # Explicit opt-in: MULTICA_BIN must point to the official version in integration/multica.lock.json.
 integration:
 	go test -race -tags=integration ./...
+
+# Explicit opt-in: MULTICA_BIN must be the fork revision in integration/multica-teambridge.lock.json.
+integration-teambridge:
+	go test -race -tags='integration teambridgeintegration' ./integration -run '^TestForkCLITeamBridge'

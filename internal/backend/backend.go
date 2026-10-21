@@ -3,8 +3,8 @@ package backend
 import "github.com/Tr0sT/multica-declarative/internal/model"
 
 // TeamBridgeOperations is used only by explicitly opted-in fork declarations.
-// The fork has no CLI surface for these operations, so its adapter uses the
-// authenticated, workspace-scoped public API. Core resources still use the CLI.
+// Its implementation invokes the fork's workspace-scoped teambridge commands;
+// the CLI owns authentication and all network operations, as for core resources.
 type TeamBridgeOperations interface {
 	ListTeamBridgeInstallations() ([]model.TeamBridgeInstallation, error)
 	DownloadTeamBridgeImage(string) (model.TeamBridgeImage, error)

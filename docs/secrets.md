@@ -98,10 +98,16 @@ selected Multica CLI; this option neither removes task context nor elevates it.
 bytes. The fork does not expose bot tokens, so even a full export cannot retrieve
 them. Full declarations include an environment-variable reference for supplying
 the token when creating or reactivating a bot; they never contain a fabricated or
-redacted credential. An existing active bot is updated with PATCH, retaining its
-token and installer identity. Reapplying it does not open a referenced token file
+redacted credential. An existing active bot is updated through
+`multica teambridge update`, retaining its token and installer identity.
+Reapplying it does not open a referenced token file
 or read its environment variable unless a new pinned allowed account needs
 identity verification.
+
+The selected CLI owns Multica authentication and all network requests. When an
+operation needs a bot token, the reconciler passes a private temporary JSON file
+to the CLI and removes it afterward. Token values never appear in command
+arguments or plan output.
 
 With `--without-secrets` or `secrets: omit`, TeamBridge credential references are
 unmanaged too. Settings for existing bots still reconcile. A missing or revoked

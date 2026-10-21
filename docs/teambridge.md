@@ -1,19 +1,68 @@
 # Optional TeamBridge / Mattermost integration
 
 This extension manages the TeamBridge integration in
-[`Tr0sT/multica`](https://github.com/Tr0sT/multica). Its contract was checked against
-fork commit [`2e634e803699ceb659616513275be1258de7cc98`](https://github.com/Tr0sT/multica/tree/2e634e803699ceb659616513275be1258de7cc98)
-and the official Multica CLI 0.6.4. The fork calls the integration `mattermost` in
-its API; the declaration directory is called `teambridge`.
+[`Tr0sT/multica`](https://github.com/Tr0sT/multica) through that fork's
+`multica teambridge` commands. `mattermost` is a CLI alias for the same commands;
+the declaration directory is called `teambridge`.
 
 The integration is optional. Ordinary export and configurations without any
-`teambridge/*/bot.yaml` declarations never call the extension's API or read its
-authentication configuration. They continue to work with upstream Multica.
+`teambridge/*/bot.yaml` declarations never invoke extension commands. They
+continue to work with the official Multica CLI and upstream server.
 
-Core agents, skills, squads, projects and autopilots still use the official CLI.
-Only this extension uses the authenticated public API: the fork has no equivalent
-CLI commands, and its attachment CLI cannot upload the standalone images that
-refusal replies require. No patched CLI, database access or server change is used.
+All resource operations, account verification and image transfers use the selected
+Multica CLI. The reconciler does not make direct HTTP requests, parse Multica
+authentication files or access a database.
+
+## CLI requirements
+
+Use a fork CLI that implements the `teambridge` command group, together with a
+fork server whose integration is configured. The exact fork revision exercised
+in CI is recorded in
+[`integration/multica-teambridge.lock.json`](../integration/multica-teambridge.lock.json).
+Ordinary upstream compatibility is tested independently with official CLI 0.6.4,
+pinned in [`integration/multica.lock.json`](../integration/multica.lock.json).
+
+Check the selected binary and profile:
+
+```bash
+/path/to/fork/multica teambridge --help
+/path/to/fork/multica --profile production teambridge list --output json
+```
+
+Put this binary on `PATH`, or pass `--multica-bin /path/to/fork/multica` to each
+export, plan and apply invocation. No automatic binary switching or HTTP fallback
+is performed. An official CLI without these commands produces a clear error
+only when the extension is requested; it remains sufficient for core resources.
+
+To build the fork CLI from source, use the Go version required by its
+`server/go.mod`:
+
+```bash
+git clone https://github.com/Tr0sT/multica.git multica-fork
+cd multica-fork/server
+go build -o ../bin/multica ./cmd/multica
+../bin/multica teambridge --help
+```
+
+### CLI contract
+
+Every invocation requests `--output json` and carries the same `--profile` and
+`--workspace-id` scope as the core resource operations.
+
+| Command | Purpose |
+| --- | --- |
+| `teambridge list` | Read the complete public installation list and capability flags |
+| `teambridge install --agent UUID --config-file PATH` | Create/reactivate a bot using a private JSON payload |
+| `teambridge update UUID --config-file PATH` | Change settings while preserving the stored token and installer |
+| `teambridge revoke UUID` | Revoke a declared installation |
+| `teambridge verify --config-file PATH` | Check bot and allowed-account identities without modifying them |
+| `teambridge image download UUID --output-file PATH` | Download a standalone refusal image and return its metadata |
+| `teambridge image upload PATH` | Upload a standalone refusal image and return its new attachment ID |
+
+Payloads and image transfers use a temporary directory with mode `0700` and files
+with mode `0600` on POSIX systems. Windows uses the temporary location's filesystem
+ACLs. Temporary files are removed after the command finishes, including error
+paths. Credentials are never placed in subprocess arguments.
 
 ## Export and apply
 
@@ -35,8 +84,8 @@ multica-declarative export --all-workspaces --with-teambridge \
 plan/apply into managing them. Deleting a local bot declaration leaves the live
 bot untouched; undeclared installations are never revoked or removed.
 
-The selected server must support and enable the integration. An absent endpoint,
-disabled integration, incomplete response, unreadable image or authorization
+The selected CLI and server must support and enable the integration. An absent
+command or endpoint, disabled integration, incomplete response, unreadable image or authorization
 failure is an explicit error. A failed export leaves the previous snapshot intact.
 Do not interpret an access or network error as an empty integration.
 
@@ -104,7 +153,7 @@ cannot be declared twice in one workspace.
 | Refusal text | Yes | Unicode text up to 4000 characters; empty text selects the server's default reply |
 | Refusal images | Actual bytes | Validates, compares and uploads standalone workspace images as needed |
 | `status` | Active or revoked | Explicit revoke is supported; reactivation needs a supplied token |
-| Bot access token | Unavailable from the API | Existing token is preserved; env/file input is required for creation/reactivation |
+| Bot access token | Not exposed by the server/CLI | Existing token is preserved; env/file input is required for creation/reactivation |
 | Installation/installer IDs and timestamps | `observed.json` | Source observations only, not writable restore fields |
 
 Context modes are `message`, `thread` and `channel`. Message/thread use a zero
@@ -140,7 +189,7 @@ modes are selected; the reconciler leaves dormant destination entries untouched.
 
 ## Credentials and authentication
 
-The adapter reuses the same selected human Multica profile as the CLI:
+The selected CLI resolves its own human Multica profile and authentication:
 
 - default: `~/.multica/config.json`;
 - `--profile NAME`: `~/.multica/profiles/NAME/config.json`;
@@ -148,12 +197,12 @@ The adapter reuses the same selected human Multica profile as the CLI:
   values; an explicit `--workspace-id` or workspace-set binding overrides the
   workspace environment value.
 
-The Multica credential is sent only to the selected Multica server. API redirects
-are rejected. Image storage downloads never receive that credential, and signed
-URLs or server response bodies are not included in errors. Daemon/task contexts
-and task-scoped `mat_` credentials are rejected; the extension never falls back to
-the daemon owner's human profile. Server-side workspace and admin authorization
-still apply. Existing-bot settings changes use PATCH and preserve the original
+The fork CLI keeps the Multica credential on requests to the selected Multica
+server and does not send it to image storage. The integration commands reject
+daemon/task contexts and task-scoped `mat_` credentials. Server-side workspace
+and admin authorization still apply. `multica-declarative` neither reads these
+profile files nor implements a separate authentication path. Existing-bot
+settings changes use `teambridge update`, preserving the original token and
 installer, whose permissions can be relevant to public/allowlist runs.
 
 **Existing bot tokens cannot be exported.** This is an intentional server API
@@ -172,8 +221,9 @@ either the environment reference or the file reference. Token files may be absen
 during `validate` and ordinary in-place apply; their contents are read only when
 required. New secret material never appears in subprocess arguments or plans.
 
-Before a fresh install, the reconciler uses the supplied bot token for read-only
-TeamBridge account lookups. It checks that the token belongs to the expected bot
+Before a fresh install, the reconciler calls `multica teambridge verify` with
+the supplied bot token in a private file. The CLI performs read-only TeamBridge
+account lookups. It checks that the token belongs to the expected bot
 and that every pinned allowed username still identifies its saved account ID.
 This requires the TeamBridge server to be reachable from the machine running
 the reconciler, in addition to Multica's own connectivity. The username lookup
@@ -243,9 +293,22 @@ unavailable values were saved.
 
 ## Verification
 
-Unit tests cover API shapes, authentication scope, credential-free signed
-downloads, source-file validation, rollback on export failure, settings
-convergence, image reuse/remapping, native account identity checks and multi-
-workspace preflight. Real CLI integration tests use the pinned official binary
-against isolated synthetic servers to verify both ordinary upstream behavior and
-the optional fork API path. No live workspace or real TeamBridge account is used.
+Unit tests cover CLI arguments and JSON shapes, profile/workspace forwarding,
+temporary credential files and cleanup, source-file validation, rollback on
+export failure, settings convergence, image reuse/remapping, native account
+identity checks and multi-workspace preflight. The fork tests its own HTTP,
+authentication, identity-verification and image-transfer implementation.
+
+Two independent real-CLI integration suites use isolated synthetic servers:
+
+```bash
+# Official upstream compatibility, including an explicit unsupported extension.
+MULTICA_BIN=/path/to/official/multica go test -race -tags=integration ./...
+
+# Fork CLI contract, export/apply round trips and image transfers.
+MULTICA_BIN=/path/to/fork/multica \
+  make integration-teambridge
+```
+
+The second lane builds the pinned fork revision before testing. No live workspace
+or real TeamBridge account is used by either suite.

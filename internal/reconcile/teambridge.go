@@ -80,11 +80,11 @@ func (r Reconciler) inspectTeamBridge(p model.Project, s *inspection) error {
 			}
 			o.change = makeChange("teambridge", d.Name, fields)
 			if a.Status == "revoked" && d.Status == "revoked" && len(fields) != 0 {
-				return fmt.Errorf("TeamBridge bot %q is revoked; the API cannot change its settings without reactivation", d.Name)
+				return fmt.Errorf("TeamBridge bot %q is revoked; Multica cannot change its settings without reactivation", d.Name)
 			}
 		} else {
 			if d.Status == "revoked" {
-				return fmt.Errorf("TeamBridge bot %q is a revoked source record; the API cannot recreate it without temporarily activating it; omit the record or explicitly declare it active with a token", d.Name)
+				return fmt.Errorf("TeamBridge bot %q is a revoked source record; Multica cannot recreate it without temporarily activating it; omit the record or explicitly declare it active with a token", d.Name)
 			}
 			o.imageIDs = make([]string, len(d.DeniedReply.Images))
 		}

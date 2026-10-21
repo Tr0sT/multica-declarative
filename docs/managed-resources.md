@@ -5,8 +5,8 @@ The current official-CLI integration baseline is Multica 0.6.4; the managed sche
 established against 0.4.42. The official, unmodified `multica` CLI remains the compatibility
 boundary for the resources below. They are never changed through direct database access
 or an HTTP mutation bypass. The separately opted-in [TeamBridge extension](teambridge.md)
-uses the fork's public API because no equivalent CLI commands exist; it does not change
-these core resource boundaries.
+uses the fork's `multica teambridge` commands. It preserves the CLI boundary and
+does not change these core resource boundaries.
 
 Agent and squad avatars are intentionally excluded from declarative management. They are not
 exported, and legacy avatar fields are accepted but ignored without reading image files or

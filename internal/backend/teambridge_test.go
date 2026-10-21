@@ -2,15 +2,15 @@ package backend
 
 import (
 	"bytes"
-	"encoding/base64"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"io"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
@@ -27,16 +27,10 @@ const (
 	tbUser      = "bbbbbbbbbbbbbbbbbbbbbbbbbb"
 )
 
-func setupTeamBridgeTest(t *testing.T) *CLI {
-	t.Helper()
-	for _, key := range []string{"MULTICA_AGENT_ID", "MULTICA_TASK_ID", "MULTICA_DAEMON_PORT", "MULTICA_TASK_CONFIG_ROOT", "MULTICA_SERVER_URL", "MULTICA_WORKSPACE_ID", "MULTICA_TOKEN"} {
-		t.Setenv(key, "")
-	}
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("MULTICA_TOKEN", "mul_test-secret")
-	t.Setenv("MULTICA_SERVER_URL", "https://multica.example.com")
-	t.Setenv("MULTICA_WORKSPACE_ID", tbWorkspace)
-	return NewCLI("multica")
+type teamBridgeRunner func(string, []string) ([]byte, []byte, error)
+
+func (r teamBridgeRunner) Run(_ context.Context, binary string, args ...string) ([]byte, []byte, error) {
+	return r(binary, args)
 }
 
 func teamBridgeWire() map[string]any {
@@ -50,72 +44,115 @@ func teamBridgeWire() map[string]any {
 		"installed_at":      "2026-10-20T12:00:00Z", "created_at": "2026-10-20T12:00:00Z", "updated_at": "2026-10-21T12:00:00Z",
 	}
 }
-
+func teamBridgeListWire(rows ...any) map[string]any {
+	if rows == nil {
+		rows = []any{}
+	}
+	return map[string]any{"configured": true, "install_supported": true, "installations": rows}
+}
 func teamBridgeInput() model.TeamBridgeBotInput {
-	return model.TeamBridgeBotInput{
-		ServerURL: "https://teambridge.example.com", Context: model.TeamBridgeContext{Mode: "thread"},
-		AccessMode: "allowlist", AllowedUsernames: []string{"sergey"},
-		DeniedReply: model.TeamBridgeDeniedReply{Mode: "text", Text: "Access denied"},
-	}
+	return model.TeamBridgeBotInput{ServerURL: "https://teambridge.example.com", Context: model.TeamBridgeContext{Mode: "thread"}, AccessMode: "allowlist", AllowedUsernames: []string{"sergey"}, DeniedReply: model.TeamBridgeDeniedReply{Mode: "text", Text: "Access denied"}}
 }
-
-func teamBridgeWriteJSON(t *testing.T, w http.ResponseWriter, value any) {
+func teamBridgeJSONBytes(t *testing.T, value any) []byte {
 	t.Helper()
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(value); err != nil {
-		t.Error(err)
+	data, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
+}
+func teamBridgeArg(args []string, flag string) string {
+	i := slices.Index(args, flag)
+	if i < 0 || i+1 >= len(args) {
+		return ""
+	}
+	return args[i+1]
+}
+func teamBridgeAssertPrivate(t *testing.T, file string) {
+	t.Helper()
+	info, err := os.Lstat(file)
+	if err != nil || !info.Mode().IsRegular() || (runtime.GOOS != "windows" && info.Mode().Perm() != 0600) {
+		t.Fatalf("not a private regular command file: %v %v", info, err)
+	}
+	info, err = os.Lstat(filepath.Dir(file))
+	if err != nil || !info.IsDir() || (runtime.GOOS != "windows" && info.Mode().Perm() != 0700) {
+		t.Fatalf("command directory is not private: %v %v", info, err)
+	}
+}
+func teamBridgeAssertRemoved(t *testing.T, file string) {
+	t.Helper()
+	if file == "" {
+		t.Fatal("no command file was captured")
+	}
+	if _, err := os.Lstat(filepath.Dir(file)); !os.IsNotExist(err) {
+		t.Fatalf("temporary command directory was not removed: %v", err)
 	}
 }
 
-func teamBridgeListWire(installations ...any) map[string]any {
-	if installations == nil {
-		installations = []any{}
-	}
-	return map[string]any{"configured": true, "install_supported": true, "installations": installations}
-}
-
-func TestTeamBridgeListNormalizesForkWireFormats(t *testing.T) {
-	cli := setupTeamBridgeTest(t)
+func TestTeamBridgeCLIListNormalizesForkWireAndForwardsScope(t *testing.T) {
 	for _, hours := range []int{0, 1440, 2160, 8760} {
 		t.Run(fmt.Sprint(hours), func(t *testing.T) {
-			wire := teamBridgeWire()
-			wire["context"] = map[string]any{"mode": "channel_extended", "extended_lookback_hours": hours}
-			wire["denied_reply"] = map[string]any{"mode": "image", "image_attachment_id": tbImage}
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.Method != http.MethodGet || r.URL.Path != "/api/workspaces/"+tbWorkspace+"/mattermost/installations" || r.Header.Get("Authorization") != "Bearer mul_test-secret" || r.Header.Get("X-Workspace-ID") != tbWorkspace {
-					t.Error("wrong scoped request")
+			row := teamBridgeWire()
+			row["context"] = map[string]any{"mode": "channel_extended", "extended_lookback_hours": hours}
+			row["denied_reply"] = map[string]any{"mode": "image", "image_attachment_id": tbImage}
+			calls := 0
+			cli := &CLI{Binary: "fork-multica", Runner: teamBridgeRunner(func(binary string, args []string) ([]byte, []byte, error) {
+				calls++
+				want := []string{"--profile", "production", "--workspace-id", tbWorkspace, "teambridge", "list", "--output", "json"}
+				if binary != "fork-multica" || !reflect.DeepEqual(args, want) {
+					t.Fatalf("wrong CLI invocation: %s %v", binary, args)
 				}
-				teamBridgeWriteJSON(t, w, teamBridgeListWire(wire))
-			}))
-			defer server.Close()
-			t.Setenv("MULTICA_SERVER_URL", server.URL)
-			values, err := cli.ListTeamBridgeInstallations()
+				return teamBridgeJSONBytes(t, teamBridgeListWire(row)), nil, nil
+			})}
+			items, err := cli.WithScope("production", tbWorkspace).ListTeamBridgeInstallations()
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(values) != 1 || values[0].Context != (model.TeamBridgeContext{Mode: "channel", LookbackHours: hours}) || values[0].DeniedReply.Mode != "images" || !reflect.DeepEqual(values[0].DeniedReply.ImageAttachmentIDs, []string{tbImage}) || values[0].AllowedUsers[0].ID != tbUser || values[0].InstallerUserID != tbInstaller {
-				t.Fatalf("public snapshot did not preserve/normalize the fork fields: %#v", values)
+			if calls != 1 || len(items) != 1 || items[0].Context != (model.TeamBridgeContext{Mode: "channel", LookbackHours: hours}) || items[0].DeniedReply.Mode != "images" || !reflect.DeepEqual(items[0].DeniedReply.ImageAttachmentIDs, []string{tbImage}) || items[0].AllowedUsers[0].ID != tbUser || items[0].InstallerUserID != tbInstaller {
+				t.Fatalf("wire fields were lost: %+v", items)
 			}
 		})
 	}
 }
 
-func TestTeamBridgeListFailsClosedForUnsupportedOrIncompleteSnapshots(t *testing.T) {
-	cli := setupTeamBridgeTest(t)
+func TestTeamBridgeCLIHasNoIndependentAuthenticationOrProfileFallback(t *testing.T) {
+	// The runner represents the selected CLI's auth boundary. The declarative
+	// adapter must not inspect profiles/env/task markers or send these values.
+	t.Setenv("HOME", t.TempDir())
+	for _, name := range []string{"MULTICA_TOKEN", "MULTICA_SERVER_URL", "MULTICA_TASK_CONFIG_ROOT", "MULTICA_AGENT_ID"} {
+		t.Setenv(name, "must-not-appear-in-cli-arguments")
+	}
+	cli := &CLI{Runner: teamBridgeRunner(func(_ string, args []string) ([]byte, []byte, error) {
+		if !reflect.DeepEqual(args, []string{"teambridge", "list", "--output", "json"}) {
+			t.Fatal(args)
+		}
+		return teamBridgeJSONBytes(t, teamBridgeListWire()), nil, nil
+	})}
+	if _, err := cli.ListTeamBridgeInstallations(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestTeamBridgeCLIRejectsIncompleteOrMismatchedResponses(t *testing.T) {
 	cases := map[string]func(map[string]any) any{
-		"missing capability":   func(w map[string]any) any { delete(w, "install_supported"); return w },
-		"disabled integration": func(w map[string]any) any { w["configured"] = false; return w },
-		"unsupported install":  func(w map[string]any) any { w["install_supported"] = false; return w },
-		"null installations":   func(w map[string]any) any { w["installations"] = nil; return w },
-		"missing public field": func(w map[string]any) any {
+		"missing capability": func(w map[string]any) any { delete(w, "install_supported"); return w },
+		"disabled":           func(w map[string]any) any { w["configured"] = false; return w },
+		"null list":          func(w map[string]any) any { w["installations"] = nil; return w },
+		"missing field": func(w map[string]any) any {
 			row := teamBridgeWire()
 			delete(row, "allowed_users")
 			w["installations"] = []any{row}
 			return w
 		},
-		"foreign workspace": func(w map[string]any) any {
+		"foreign scope": func(w map[string]any) any {
 			row := teamBridgeWire()
 			row["workspace_id"] = tbAgent
+			w["installations"] = []any{row}
+			return w
+		},
+		"invalid workspace": func(w map[string]any) any {
+			row := teamBridgeWire()
+			row["workspace_id"] = ""
 			w["installations"] = []any{row}
 			return w
 		},
@@ -125,7 +162,7 @@ func TestTeamBridgeListFailsClosedForUnsupportedOrIncompleteSnapshots(t *testing
 			w["installations"] = []any{row}
 			return w
 		},
-		"incomplete extended context": func(w map[string]any) any {
+		"missing extended window": func(w map[string]any) any {
 			row := teamBridgeWire()
 			row["context"] = map[string]any{"mode": "channel_extended"}
 			w["installations"] = []any{row}
@@ -133,489 +170,347 @@ func TestTeamBridgeListFailsClosedForUnsupportedOrIncompleteSnapshots(t *testing
 		},
 		"ambiguous context": func(w map[string]any) any {
 			row := teamBridgeWire()
-			row["context"] = map[string]any{"mode": "channel_extended", "extended_lookback_hours": 0, "lookback_hours": 24}
+			row["context"] = map[string]any{"mode": "channel_extended", "lookback_hours": 24, "extended_lookback_hours": 0}
 			w["installations"] = []any{row}
 			return w
 		},
-		"unknown access": func(w map[string]any) any {
-			row := teamBridgeWire()
-			row["access_mode"] = "future"
-			w["installations"] = []any{row}
-			return w
-		},
-		"duplicate installations": func(w map[string]any) any { w["installations"] = []any{teamBridgeWire(), teamBridgeWire()}; return w },
-		"duplicate users": func(w map[string]any) any {
-			row := teamBridgeWire()
-			row["allowed_users"] = []any{map[string]any{"id": tbUser, "username": "sergey"}, map[string]any{"id": tbUser, "username": "other"}}
-			w["installations"] = []any{row}
-			return w
-		},
-		"null user list": func(w map[string]any) any {
+		"duplicate rows": func(w map[string]any) any { w["installations"] = []any{teamBridgeWire(), teamBridgeWire()}; return w },
+		"null users": func(w map[string]any) any {
 			row := teamBridgeWire()
 			row["allowed_users"] = nil
 			w["installations"] = []any{row}
 			return w
 		},
-		"unknown denied reply": func(w map[string]any) any {
+		"invalid status": func(w map[string]any) any {
 			row := teamBridgeWire()
-			row["denied_reply"] = map[string]any{"mode": "video"}
+			row["status"] = "future"
+			w["installations"] = []any{row}
+			return w
+		},
+		"invalid timestamp": func(w map[string]any) any {
+			row := teamBridgeWire()
+			row["created_at"] = "yesterday"
+			w["installations"] = []any{row}
+			return w
+		},
+		"invalid image": func(w map[string]any) any {
+			row := teamBridgeWire()
+			row["denied_reply"] = map[string]any{"mode": "image"}
 			w["installations"] = []any{row}
 			return w
 		},
 	}
 	for name, change := range cases {
 		t.Run(name, func(t *testing.T) {
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { teamBridgeWriteJSON(t, w, change(teamBridgeListWire())) }))
-			defer server.Close()
-			t.Setenv("MULTICA_SERVER_URL", server.URL)
-			if _, err := cli.ListTeamBridgeInstallations(); err == nil {
-				t.Fatal("accepted an incomplete or unsupported snapshot")
+			runner := &fakeRunner{stdout: teamBridgeJSONBytes(t, change(teamBridgeListWire()))}
+			if _, err := (&CLI{Runner: runner}).WithScope("", tbWorkspace).ListTeamBridgeInstallations(); err == nil {
+				t.Fatal("unsafe or incomplete snapshot accepted")
 			}
+		})
+	}
+	first, second := teamBridgeWire(), teamBridgeWire()
+	second["id"], second["agent_id"], second["workspace_id"] = tbImage, tbInstaller, tbAgent
+	runner := &fakeRunner{stdout: teamBridgeJSONBytes(t, teamBridgeListWire(first, second))}
+	if _, err := (&CLI{Runner: runner}).ListTeamBridgeInstallations(); err == nil {
+		t.Fatal("mixed-workspace default-profile response accepted")
+	}
+}
+
+func TestTeamBridgeCLIInstallAndVerifyUsePrivateConfigFiles(t *testing.T) {
+	for _, operation := range []string{"install", "verify"} {
+		t.Run(operation, func(t *testing.T) {
+			var file string
+			secret := "synthetic-bot-secret"
+			cli := &CLI{Runner: teamBridgeRunner(func(_ string, args []string) ([]byte, []byte, error) {
+				if args[0] != "teambridge" || args[1] != operation || teamBridgeArg(args, "--output") != "json" {
+					t.Fatal(args)
+				}
+				if strings.Contains(strings.Join(args, " "), secret) {
+					t.Fatal("bot token leaked to argv")
+				}
+				file = teamBridgeArg(args, "--config-file")
+				teamBridgeAssertPrivate(t, file)
+				data, err := os.ReadFile(file)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var config map[string]json.RawMessage
+				if json.Unmarshal(data, &config) != nil || string(config["access_token"]) != `"synthetic-bot-secret"` || string(config["server_url"]) != `"https://teambridge.example.com"` {
+					t.Fatal("config did not preserve required secret/server fields")
+				}
+				if operation == "install" {
+					if teamBridgeArg(args, "--agent") != tbAgent || string(config["access_mode"]) != `"allowlist"` || string(config["allowed_usernames"]) != `["sergey"]` {
+						t.Fatal("install contract mismatch")
+					}
+					return teamBridgeJSONBytes(t, teamBridgeWire()), nil, nil
+				}
+				var users []model.TeamBridgeAllowedUser
+				if json.Unmarshal(config["allowed_users"], &users) != nil || len(users) != 1 || users[0].ID != tbUser || users[0].Username != "sergey" || string(config["expected_bot_user_id"]) != `"`+tbBot+`"` {
+					t.Fatal("verify lost pinned account identities")
+				}
+				if config["context"] != nil || config["denied_reply"] != nil || config["access_mode"] != nil {
+					t.Fatal("verify included mutation fields")
+				}
+				return []byte(`{"verified":true}`), nil, nil
+			})}
+			input := teamBridgeInput()
+			input.AccessToken = secret
+			var err error
+			if operation == "install" {
+				_, err = cli.InstallTeamBridgeBot(tbAgent, input)
+			} else {
+				err = cli.VerifyTeamBridgeBot(input, tbBot, []model.TeamBridgeAllowedUser{{ID: tbUser, Username: "sergey"}})
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			teamBridgeAssertRemoved(t, file)
 		})
 	}
 }
 
-func TestTeamBridgeSettingsPreserveSecretsAndEncodeAccessModes(t *testing.T) {
-	cli := setupTeamBridgeTest(t)
+func TestTeamBridgeCLIUpdatePreservesTokenAndEncodesEmptyAllowlist(t *testing.T) {
 	for _, mode := range []string{"members", "anyone", "allowlist"} {
 		t.Run(mode, func(t *testing.T) {
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.Method != http.MethodPatch || r.URL.Path != "/api/workspaces/"+tbWorkspace+"/mattermost/installations/"+tbInstall {
-					t.Errorf("unexpected update %s %s", r.Method, r.URL.Path)
+			var file string
+			cli := &CLI{Runner: teamBridgeRunner(func(_ string, args []string) ([]byte, []byte, error) {
+				if !reflect.DeepEqual(args[:3], []string{"teambridge", "update", tbInstall}) {
+					t.Fatal(args)
+				}
+				file = teamBridgeArg(args, "--config-file")
+				teamBridgeAssertPrivate(t, file)
+				data, err := os.ReadFile(file)
+				if err != nil {
+					t.Fatal(err)
 				}
 				var body map[string]json.RawMessage
-				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-					t.Error(err)
+				if json.Unmarshal(data, &body) != nil {
+					t.Fatal("invalid config")
 				}
-				for _, forbidden := range []string{"access_token", "server_url", "agent_id", "installer_user_id"} {
-					if _, ok := body[forbidden]; ok {
-						t.Errorf("PATCH must not contain %s", forbidden)
+				for _, key := range []string{"access_token", "server_url", "agent_id", "installer_user_id"} {
+					if body[key] != nil {
+						t.Fatalf("update included %s", key)
 					}
 				}
 				if mode == "allowlist" && string(body["allowed_usernames"]) != "[]" {
-					t.Error("empty allowlist must be []")
+					t.Fatal("empty allowlist must be explicit []")
 				}
 				if mode != "allowlist" && body["allowed_usernames"] != nil {
-					t.Error("non-allowlist must omit usernames")
+					t.Fatal("other access modes must omit usernames")
 				}
-				wire := teamBridgeWire()
-				wire["access_mode"] = mode
-				wire["allowed_users"] = []any{}
-				teamBridgeWriteJSON(t, w, wire)
-			}))
-			defer server.Close()
-			t.Setenv("MULTICA_SERVER_URL", server.URL)
+				row := teamBridgeWire()
+				row["access_mode"], row["allowed_users"] = mode, []any{}
+				return teamBridgeJSONBytes(t, row), nil, nil
+			})}
 			input := teamBridgeInput()
-			input.AccessMode = mode
-			input.AllowedUsernames = nil
+			input.AccessMode, input.AllowedUsernames = mode, nil
 			if err := cli.UpdateTeamBridgeBot(tbInstall, input); err != nil {
 				t.Fatal(err)
 			}
+			teamBridgeAssertRemoved(t, file)
 		})
 	}
 	input := teamBridgeInput()
-	input.AccessToken = "new-secret"
-	if err := cli.UpdateTeamBridgeBot(tbInstall, input); err == nil {
-		t.Fatal("PATCH silently ignored token rotation")
+	input.AccessToken = "must-not-rotate"
+	runner := &fakeRunner{}
+	if err := (&CLI{Runner: runner}).UpdateTeamBridgeBot(tbInstall, input); err == nil || len(runner.calls) != 0 {
+		t.Fatal("token rotation reached settings update")
 	}
 }
 
-func TestTeamBridgeInstallAndRevoke(t *testing.T) {
-	cli := setupTeamBridgeTest(t)
-	var methods []string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		methods = append(methods, r.Method)
-		switch r.Method {
-		case http.MethodGet:
-			teamBridgeWriteJSON(t, w, teamBridgeListWire())
-		case http.MethodPost:
-			if r.URL.Query().Get("agent_id") != tbAgent || r.URL.Path != "/api/workspaces/"+tbWorkspace+"/mattermost/install" {
-				t.Error("wrong installation target")
-			}
-			var body map[string]any
-			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-				t.Error(err)
-			}
-			if body["access_token"] != "bot-secret" || body["server_url"] != "https://teambridge.example.com" {
-				t.Error("installation token/server missing")
-			}
-			if !reflect.DeepEqual(body["allowed_usernames"], []any{"sergey"}) {
-				t.Error("usernames not normalized")
-			}
-			teamBridgeWriteJSON(t, w, teamBridgeWire())
-		case http.MethodDelete:
-			if r.URL.Path != "/api/workspaces/"+tbWorkspace+"/mattermost/installations/"+tbInstall {
-				t.Error("wrong revoke target")
-			}
-			w.WriteHeader(http.StatusNoContent)
-		}
-	}))
-	defer server.Close()
-	t.Setenv("MULTICA_SERVER_URL", server.URL)
-	input := teamBridgeInput()
-	input.AccessToken = "bot-secret"
-	input.AllowedUsernames = []string{" @Sergey ", "sergey"}
-	installed, err := cli.InstallTeamBridgeBot(tbAgent, input)
-	if err != nil || installed.ID != tbInstall {
-		t.Fatalf("install failed: %v", err)
-	}
+func TestTeamBridgeCLIConfirmsRevocationAndVerification(t *testing.T) {
+	runner := &fakeRunner{stdout: []byte(`{"id":"` + tbInstall + `","revoked":true}`)}
+	cli := &CLI{Runner: runner}
 	if err := cli.RevokeTeamBridgeBot(tbInstall); err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(methods, []string{"GET", "POST", "DELETE"}) {
-		t.Fatalf("operations: %v", methods)
+	if !reflect.DeepEqual(runner.calls[0].args, []string{"teambridge", "revoke", tbInstall, "--output", "json"}) {
+		t.Fatal(runner.calls[0].args)
+	}
+	runner.stdout = []byte(`{"id":"` + tbInstall + `","revoked":false}`)
+	if err := cli.RevokeTeamBridgeBot(tbInstall); err == nil {
+		t.Fatal("unconfirmed revocation accepted")
+	}
+	runner.stdout = []byte(`{"verified":false}`)
+	input := teamBridgeInput()
+	input.AccessToken = "synthetic-secret"
+	if err := cli.VerifyTeamBridgeBot(input, tbBot, []model.TeamBridgeAllowedUser{{Username: "sergey"}}); err == nil {
+		t.Fatal("unconfirmed verification accepted")
 	}
 }
 
-func TestTeamBridgeHTTPFailuresNeverExposeBodiesOrFollowAPIRedirects(t *testing.T) {
-	cli := setupTeamBridgeTest(t)
-	redirected := 0
-	destination := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { redirected++; t.Error("API redirect followed") }))
-	defer destination.Close()
-	for _, code := range []int{301, 302, 307, 308, 401, 403, 404, 409, 503} {
-		t.Run(fmt.Sprint(code), func(t *testing.T) {
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				w.Header().Set("Location", destination.URL+"?token=secret-in-location")
-				w.WriteHeader(code)
-				_, _ = io.WriteString(w, "mul_test-secret bot-secret secret-in-body")
-			}))
-			defer server.Close()
-			t.Setenv("MULTICA_SERVER_URL", server.URL)
-			_, err := cli.ListTeamBridgeInstallations()
-			if err == nil {
-				t.Fatal("HTTP failure was swallowed")
+func TestTeamBridgeCLICommandFailuresNeverExposeSecretsAndAlwaysCleanUp(t *testing.T) {
+	const secret = "sensitive-sentinel-73"
+	for _, tc := range []struct {
+		name, stderr, stdout, want string
+		err                        error
+	}{
+		{"command error", "request echoed " + secret, "", "command failed", errors.New(secret)},
+		{"unsupported CLI", `unknown command "teambridge" for "multica" ` + secret, "", "compatible TeamBridge fork CLI", errors.New(secret)},
+		{"unsupported server", "API error (404): " + secret, "", "HTTP 404", errors.New(secret)},
+		{"authentication", "teambridge request failed (HTTP 401) " + secret, "", "authentication failed", errors.New(secret)},
+		{"permission", "teambridge request failed (HTTP 403) " + secret, "", "admin permissions", errors.New(secret)},
+		{"conflict", "teambridge request failed (HTTP 409) " + secret, "", "installation conflict", errors.New(secret)},
+		{"wrong bot", "TeamBridge token does not belong to the expected active bot; nothing was changed " + secret, "", "correct bot token", errors.New(secret)},
+		{"wrong account", "TeamBridge username does not identify the expected active account; check renamed or reused usernames " + secret, "", "exported account", errors.New(secret)},
+		{"malformed JSON", "", secret, "invalid or oversized JSON", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var file string
+			cli := &CLI{Runner: teamBridgeRunner(func(_ string, args []string) ([]byte, []byte, error) {
+				file = teamBridgeArg(args, "--config-file")
+				teamBridgeAssertPrivate(t, file)
+				return []byte(tc.stdout), []byte(tc.stderr + " https://objects.example.com/private?signature=signed-url-sentinel"), tc.err
+			})}
+			input := teamBridgeInput()
+			input.AccessToken = secret
+			_, err := cli.InstallTeamBridgeBot(tbAgent, input)
+			if err == nil || strings.Contains(err.Error(), secret) || strings.Contains(err.Error(), "signed-url-sentinel") || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("wrong/sensitive error: %v", err)
 			}
-			if strings.Contains(err.Error(), "secret") || strings.Contains(err.Error(), destination.URL) {
-				t.Fatalf("error leaked credentials/URL: %s", err)
-			}
+			teamBridgeAssertRemoved(t, file)
 		})
 	}
-	if redirected != 0 {
-		t.Fatal("redirect reached destination")
-	}
 }
 
-func teamBridgePNG(t *testing.T) []byte {
-	t.Helper()
-	data, err := base64.StdEncoding.DecodeString("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aE4sAAAAASUVORK5CYII=")
-	if err != nil {
-		t.Fatal(err)
-	}
-	return data
-}
-
-func TestTeamBridgeImageDownloadAndUploadArePortableAndScoped(t *testing.T) {
-	cli := setupTeamBridgeTest(t)
-	data := teamBridgePNG(t)
-	download := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "" || r.Header.Get("X-Workspace-ID") != "" || r.Header.Get("Cookie") != "" {
-			t.Error("Multica credentials leaked to signed storage URL")
+func TestTeamBridgeCLIImagesUsePrivateFilesAndVerifyBytes(t *testing.T) {
+	data := []byte("\x89PNG\r\n\x1a\npayload")
+	var downloaded, uploaded string
+	cli := &CLI{Runner: teamBridgeRunner(func(_ string, args []string) ([]byte, []byte, error) {
+		if args[0] != "teambridge" || args[1] != "image" || teamBridgeArg(args, "--output") != "json" {
+			t.Fatal(args)
 		}
-		_, _ = w.Write(data)
-	}))
-	defer download.Close()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer mul_test-secret" || r.Header.Get("X-Workspace-ID") != tbWorkspace {
-			t.Error("missing scoped API auth")
-		}
-		switch r.URL.Path {
-		case "/api/attachments/" + tbImage:
-			teamBridgeWriteJSON(t, w, map[string]any{"id": tbImage, "workspace_id": tbWorkspace, "filename": `C:\old\meme.png`, "size_bytes": len(data), "download_url": download.URL + "?signed=private"})
-		case "/api/upload-file":
-			if r.Method != http.MethodPost {
-				t.Error("wrong upload method")
+		switch args[2] {
+		case "download":
+			if args[3] != tbImage {
+				t.Fatal(args)
 			}
-			if err := r.ParseMultipartForm(6 << 20); err != nil {
-				t.Error(err)
-				return
+			downloaded = teamBridgeArg(args, "--output-file")
+			teamBridgeAssertPrivate(t, downloaded)
+			if err := os.WriteFile(downloaded, data, 0600); err != nil {
+				t.Fatal(err)
 			}
-			defer r.MultipartForm.RemoveAll()
-			if len(r.MultipartForm.Value) != 0 {
-				t.Error("standalone upload has task/issue associations")
+			return teamBridgeJSONBytes(t, map[string]any{"id": tbImage, "filename": `C:\old\meme.png`, "content_type": "image/png", "size": len(data), "path": downloaded}), nil, nil
+		case "upload":
+			uploaded = args[3]
+			teamBridgeAssertPrivate(t, uploaded)
+			bytes, err := os.ReadFile(uploaded)
+			if err != nil || !reflect.DeepEqual(bytes, data) || filepath.Base(uploaded) != "meme.png" {
+				t.Fatal("wrong upload file")
 			}
-			file, header, err := r.FormFile("file")
-			if err != nil {
-				t.Error(err)
-				return
-			}
-			defer file.Close()
-			actual, _ := io.ReadAll(file)
-			if header.Filename != "meme.png" || !bytes.Equal(actual, data) {
-				t.Error("image was not uploaded intact")
-			}
-			teamBridgeWriteJSON(t, w, map[string]any{"id": tbImage, "workspace_id": tbWorkspace})
+			return teamBridgeJSONBytes(t, map[string]any{"id": tbImage, "filename": "meme.png", "content_type": "image/png", "size": len(data)}), nil, nil
 		default:
-			t.Errorf("unexpected path %s", r.URL.Path)
+			t.Fatal(args)
 		}
-	}))
-	defer server.Close()
-	t.Setenv("MULTICA_SERVER_URL", server.URL)
+		return nil, nil, nil
+	})}
 	image, err := cli.DownloadTeamBridgeImage(tbImage)
 	if err != nil || image.Filename != "meme.png" || image.ContentType != "image/png" || !bytes.Equal(image.Data, data) {
-		t.Fatalf("image round trip failed: %v", err)
+		t.Fatalf("download mismatch: %+v %v", image, err)
 	}
+	teamBridgeAssertRemoved(t, downloaded)
 	id, err := cli.UploadTeamBridgeImage(image)
 	if err != nil || id != tbImage {
-		t.Fatalf("upload failed: %v", err)
+		t.Fatalf("upload mismatch: %s %v", id, err)
 	}
+	teamBridgeAssertRemoved(t, uploaded)
 }
 
-func TestTeamBridgeImageRelativeRedirectDropsCredentials(t *testing.T) {
-	cli := setupTeamBridgeTest(t)
-	data := teamBridgePNG(t)
-	destination := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "" || r.Header.Get("X-Workspace-ID") != "" {
-			t.Error("redirect leaked scoped headers")
-		}
-		_, _ = w.Write(data)
-	}))
-	defer destination.Close()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/attachments/"+tbImage {
-			teamBridgeWriteJSON(t, w, map[string]any{"id": tbImage, "workspace_id": tbWorkspace, "filename": "meme.png", "size_bytes": len(data), "download_url": "/download"})
-			return
-		}
-		if r.URL.Path != "/download" || r.Header.Get("Authorization") != "Bearer mul_test-secret" {
-			t.Error("relative URL missing auth")
-		}
-		http.Redirect(w, r, destination.URL, http.StatusFound)
-	}))
-	defer server.Close()
-	t.Setenv("MULTICA_SERVER_URL", server.URL)
-	if _, err := cli.DownloadTeamBridgeImage(tbImage); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestTeamBridgeImagesRejectOversizedWrongWorkspaceAndNonImages(t *testing.T) {
-	cli := setupTeamBridgeTest(t)
-	if _, err := cli.UploadTeamBridgeImage(model.TeamBridgeImage{Filename: "fake.png", Data: []byte("text")}); err == nil {
-		t.Fatal("uploaded non-image")
-	}
-	oversized := append(teamBridgePNG(t), make([]byte, model.MaxTeamBridgeImageBytes)...)
-	if _, err := cli.UploadTeamBridgeImage(model.TeamBridgeImage{Filename: "big.png", Data: oversized}); err == nil {
-		t.Fatal("uploaded oversized image")
-	}
-	for _, mode := range []string{"wrong workspace", "private attachment", "oversized download", "size mismatch", "non-image"} {
-		t.Run(mode, func(t *testing.T) {
-			data := teamBridgePNG(t)
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Path == "/api/attachments/"+tbImage {
-					metadata := map[string]any{"id": tbImage, "workspace_id": tbWorkspace, "filename": "meme.png", "size_bytes": len(data), "download_url": "/image"}
-					if mode == "wrong workspace" {
-						metadata["workspace_id"] = tbAgent
-					}
-					if mode == "private attachment" {
-						metadata["chat_session_id"] = tbAgent
-					}
-					teamBridgeWriteJSON(t, w, metadata)
-					return
-				}
-				switch mode {
-				case "oversized download":
-					_, _ = w.Write(oversized)
-				case "size mismatch":
-					_, _ = w.Write(data[:len(data)-1])
-				case "non-image":
-					_, _ = w.Write(bytes.Repeat([]byte("x"), len(data)))
-				default:
-					t.Error("invalid metadata was followed by download")
-				}
-			}))
-			defer server.Close()
-			t.Setenv("MULTICA_SERVER_URL", server.URL)
-			if _, err := cli.DownloadTeamBridgeImage(tbImage); err == nil {
-				t.Fatal("accepted unsafe/incomplete image")
+func TestTeamBridgeCLIImageDownloadRejectsUntrustedOutputAndCleansFiles(t *testing.T) {
+	for _, kind := range []string{"error", "missing output", "wrong id", "wrong path", "wrong size", "oversize", "wrong type", "unprotected", "directory", "symlink"} {
+		t.Run(kind, func(t *testing.T) {
+			if kind == "unprotected" && runtime.GOOS == "windows" {
+				t.Skip("Windows FileMode permission bits do not describe ACL access")
 			}
+			var file string
+			data := []byte("\x89PNG\r\n\x1a\npayload")
+			cli := &CLI{Runner: teamBridgeRunner(func(_ string, args []string) ([]byte, []byte, error) {
+				file = teamBridgeArg(args, "--output-file")
+				teamBridgeAssertPrivate(t, file)
+				if kind == "error" {
+					return nil, []byte("signed-private-url"), errors.New("signed-private-url")
+				}
+				if err := os.WriteFile(file, data, 0600); err != nil {
+					t.Fatal(err)
+				}
+				meta := map[string]any{"id": tbImage, "filename": "image.png", "content_type": "image/png", "size": len(data), "path": file}
+				switch kind {
+				case "missing output":
+					if err := os.Remove(file); err != nil {
+						t.Fatal(err)
+					}
+				case "wrong id":
+					meta["id"] = tbInstall
+				case "wrong path":
+					meta["path"] = "/private/elsewhere"
+				case "wrong size":
+					meta["size"] = len(data) + 1
+				case "oversize":
+					meta["size"] = model.MaxTeamBridgeImageBytes + 1
+				case "wrong type":
+					meta["content_type"] = "image/jpeg"
+				case "unprotected":
+					if err := os.Chmod(file, 0644); err != nil {
+						t.Fatal(err)
+					}
+				case "directory":
+					if err := os.Remove(file); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.Mkdir(file, 0700); err != nil {
+						t.Fatal(err)
+					}
+				case "symlink":
+					outside := filepath.Join(t.TempDir(), "outside.png")
+					if err := os.WriteFile(outside, data, 0600); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.Remove(file); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.Symlink(outside, file); err != nil {
+						if runtime.GOOS == "windows" {
+							t.Skipf("symlink creation is unavailable: %v", err)
+						}
+						t.Fatal(err)
+					}
+				}
+				return teamBridgeJSONBytes(t, meta), nil, nil
+			})}
+			if _, err := cli.DownloadTeamBridgeImage(tbImage); err == nil || strings.Contains(err.Error(), "signed-private-url") {
+				t.Fatalf("unsafe output accepted or leaked: %v", err)
+			}
+			teamBridgeAssertRemoved(t, file)
 		})
 	}
 }
 
-func TestTeamBridgeVerifyRejectsWrongBotAndReusedUsernameBeforeInstall(t *testing.T) {
-	cli := setupTeamBridgeTest(t)
-	for _, mode := range []string{"valid", "new images", "wrong bot", "personal token", "reused username", "missing username", "deleted user"} {
-		t.Run(mode, func(t *testing.T) {
-			var requests []string
-			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				requests = append(requests, r.Method+" "+r.URL.Path)
-				if r.Header.Get("Authorization") != "Bearer bot-secret" || r.Header.Get("X-Workspace-ID") != "" {
-					t.Error("verification used the wrong credentials")
-				}
-				switch r.URL.Path {
-				case "/api/v4/users/me":
-					id, isBot := tbBot, true
-					if mode == "wrong bot" {
-						id = tbUser
-					}
-					if mode == "personal token" {
-						isBot = false
-					}
-					teamBridgeWriteJSON(t, w, map[string]any{"id": id, "username": "ask", "is_bot": isBot, "delete_at": 0})
-				case "/api/v4/users/usernames":
-					if r.Method != http.MethodPost {
-						t.Error("username lookup method")
-					}
-					var names []string
-					if err := json.NewDecoder(r.Body).Decode(&names); err != nil {
-						t.Error(err)
-					}
-					if !reflect.DeepEqual(names, []string{"sergey"}) {
-						t.Error("lookup names differ")
-					}
-					users := []any{}
-					id, deleted := tbUser, 0
-					if mode == "reused username" {
-						id = "cccccccccccccccccccccccccc"
-					}
-					if mode == "deleted user" {
-						deleted = 123
-					}
-					if mode != "missing username" {
-						users = append(users, map[string]any{"id": id, "username": "sergey", "is_bot": false, "delete_at": deleted})
-					}
-					teamBridgeWriteJSON(t, w, users)
-				default:
-					t.Error("verification made a non-lookup request")
-				}
-			}))
-			defer server.Close()
-			cli.HTTPClient = server.Client()
-			input := teamBridgeInput()
-			input.ServerURL = server.URL
-			input.AccessToken = "bot-secret"
-			if mode == "new images" {
-				input.DeniedReply = model.TeamBridgeDeniedReply{Mode: "images"}
-			}
-			err := cli.VerifyTeamBridgeBot(input, tbBot, []model.TeamBridgeAllowedUser{{ID: tbUser, Username: "sergey"}})
-			if (err == nil) != (mode == "valid" || mode == "new images") {
-				t.Fatalf("verification mode %s: %v", mode, err)
-			}
-			if len(requests) > 2 {
-				t.Fatalf("verification unexpectedly mutated: %v", requests)
-			}
-		})
+func TestTeamBridgeCLIInvalidInputsDoNotExecuteCommands(t *testing.T) {
+	runner := &fakeRunner{}
+	cli := &CLI{Runner: runner}
+	if _, err := cli.DownloadTeamBridgeImage("not-a-uuid"); err == nil {
+		t.Fatal("invalid attachment id accepted")
 	}
-}
-
-func TestTeamBridgeVerificationRefusesRedirectsAndRedactsErrors(t *testing.T) {
-	cli := setupTeamBridgeTest(t)
-	destination := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Error("verification followed a redirect with a bot token")
-	}))
-	defer destination.Close()
-	for _, code := range []int{http.StatusTemporaryRedirect, http.StatusUnauthorized, http.StatusServiceUnavailable} {
-		t.Run(fmt.Sprint(code), func(t *testing.T) {
-			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				w.Header().Set("Location", destination.URL+"?private=bot-secret")
-				w.WriteHeader(code)
-				_, _ = io.WriteString(w, "bot-secret mul_test-secret")
-			}))
-			defer server.Close()
-			cli.HTTPClient = server.Client()
-			input := teamBridgeInput()
-			input.ServerURL, input.AccessToken = server.URL, "bot-secret"
-			err := cli.VerifyTeamBridgeBot(input, tbBot, nil)
-			if err == nil || strings.Contains(err.Error(), "secret") || strings.Contains(err.Error(), destination.URL) {
-				t.Fatalf("unsafe verification error: %v", err)
-			}
-		})
+	if _, err := cli.UploadTeamBridgeImage(model.TeamBridgeImage{Filename: "text.png", Data: []byte("not an image")}); err == nil {
+		t.Fatal("non-image accepted")
 	}
-}
-
-func TestTeamBridgeImageDownloadRefusesHTTPSDowngrade(t *testing.T) {
-	cli := setupTeamBridgeTest(t)
-	destination := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Error("HTTPS image download downgraded to HTTP")
-	}))
-	defer destination.Close()
-	for _, mode := range []string{"absolute metadata", "redirect"} {
-		t.Run(mode, func(t *testing.T) {
-			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Path == "/api/attachments/"+tbImage {
-					downloadURL := destination.URL
-					if mode == "redirect" {
-						downloadURL = "/download"
-					}
-					teamBridgeWriteJSON(t, w, map[string]any{"id": tbImage, "workspace_id": tbWorkspace, "filename": "meme.png", "size_bytes": 12, "download_url": downloadURL})
-					return
-				}
-				http.Redirect(w, r, destination.URL, http.StatusFound)
-			}))
-			defer server.Close()
-			cli.HTTPClient = server.Client()
-			t.Setenv("MULTICA_SERVER_URL", server.URL)
-			if _, err := cli.DownloadTeamBridgeImage(tbImage); err == nil {
-				t.Fatal("accepted HTTP downgrade")
-			}
-		})
+	if _, err := cli.UploadTeamBridgeImage(model.TeamBridgeImage{Filename: "big.png", Data: bytes.Repeat([]byte("x"), model.MaxTeamBridgeImageBytes+1)}); err == nil {
+		t.Fatal("oversized image accepted")
 	}
-}
-
-func TestTeamBridgeProfileAndEnvironmentScope(t *testing.T) {
-	cli := setupTeamBridgeTest(t)
-	profileDir := filepath.Join(os.Getenv("HOME"), ".multica", "profiles", "production")
-	if err := os.MkdirAll(profileDir, 0o700); err != nil {
-		t.Fatal(err)
+	if err := cli.RevokeTeamBridgeBot("not-a-uuid"); err == nil {
+		t.Fatal("invalid revoke id accepted")
 	}
-	if err := os.WriteFile(filepath.Join(profileDir, "config.json"), []byte(`{"server_url":"https://profile.example.com","workspace_id":"`+tbWorkspace+`","token":"profile-secret"}`), 0o600); err != nil {
-		t.Fatal(err)
+	input := teamBridgeInput()
+	input.AccessToken = "token\nwith-newline"
+	if _, err := cli.InstallTeamBridgeBot(tbAgent, input); err == nil {
+		t.Fatal("invalid token accepted")
 	}
-	t.Setenv("MULTICA_SERVER_URL", "")
-	t.Setenv("MULTICA_TOKEN", "")
-	t.Setenv("MULTICA_WORKSPACE_ID", "")
-	connection, err := cli.WithScope("production", "").teamBridgeConnection()
-	if err != nil {
-		t.Fatal(err)
+	input.AccessToken = "synthetic-secret"
+	input.ServerURL = "http://unsafe.example.com"
+	if err := cli.VerifyTeamBridgeBot(input, tbBot, nil); err == nil {
+		t.Fatal("HTTP verification accepted")
 	}
-	if connection.baseURL != "https://profile.example.com" || connection.workspaceID != tbWorkspace || connection.token != "profile-secret" {
-		t.Fatal("named profile not resolved")
+	if len(runner.calls) != 0 {
+		t.Fatalf("invalid input executed commands: %+v", runner.calls)
 	}
-	t.Setenv("MULTICA_SERVER_URL", "wss://override.example.com/ws")
-	t.Setenv("MULTICA_TOKEN", " env-secret ")
-	t.Setenv("MULTICA_WORKSPACE_ID", tbAgent)
-	connection, err = cli.WithScope("production", tbInstaller).teamBridgeConnection()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if connection.baseURL != "https://override.example.com" || connection.workspaceID != tbInstaller || connection.token != "env-secret" {
-		t.Fatal("explicit scope/environment precedence was not preserved")
-	}
-	if _, err := cli.WithScope("../production", tbWorkspace).teamBridgeConnection(); err == nil {
-		t.Fatal("unsafe profile name accepted")
-	}
-}
-
-func TestTeamBridgeNeverFallsBackToHumanCredentialsFromTaskContext(t *testing.T) {
-	cli := setupTeamBridgeTest(t)
-	for _, key := range []string{"MULTICA_AGENT_ID", "MULTICA_TASK_ID", "MULTICA_DAEMON_PORT", "MULTICA_TASK_CONFIG_ROOT"} {
-		t.Run(key, func(t *testing.T) {
-			t.Setenv(key, "present")
-			if _, err := cli.teamBridgeConnection(); err == nil {
-				t.Fatal("task context inherited human credentials")
-			}
-		})
-	}
-	t.Run("task token", func(t *testing.T) {
-		t.Setenv("MULTICA_TOKEN", "mat_task-secret")
-		if _, err := cli.teamBridgeConnection(); err == nil {
-			t.Fatal("task token accepted")
-		}
-	})
-	t.Run("ancestor marker", func(t *testing.T) {
-		root := t.TempDir()
-		child := filepath.Join(root, "child")
-		if err := os.MkdirAll(filepath.Join(root, ".multica"), 0o700); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.MkdirAll(child, 0o700); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(root, ".multica", "daemon_task_context.json"), []byte(`{"managed_by":"multica-daemon-task"}`), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		t.Chdir(child)
-		if _, err := cli.teamBridgeConnection(); err == nil {
-			t.Fatal("ancestor task marker ignored")
-		}
-	})
 }
