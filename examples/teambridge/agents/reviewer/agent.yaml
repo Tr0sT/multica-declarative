@@ -1,0 +1,7 @@
+name: TeamBridge Reviewer
+description: Answers project questions from TeamBridge.
+instructions: Read the available project sources and cite evidence in your answer.
+multica:
+  runtime: desktop
+  permission: private
+  maxConcurrentTasks: 1

@@ -1,0 +1,14 @@
+name: TeamBridge Reviewer
+agent: TeamBridge Reviewer
+serverUrl: https://teambridge.example.com
+status: active
+context:
+  mode: channel
+  lookbackHours: 24
+accessMode: allowlist
+allowedUsers:
+  - username: alice
+deniedReply:
+  mode: text
+  text: This bot is available to the project team. Ask an administrator for access.
+accessTokenEnv: TEAMBRIDGE_REVIEWER_TOKEN

@@ -29,6 +29,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	binary := flags.String("multica-bin", "multica", "Multica CLI binary")
 	outputDir := flags.String("output-dir", "multica-export", "directory written by export")
 	force := flags.Bool("force", false, "replace generated export paths")
+	withTeamBridge := flags.Bool("with-teambridge", false, "include optional fork TeamBridge configuration and reply images in export")
 	withoutSecrets := flags.Bool("without-secrets", false, "omit agent env, MCP, runtime config and custom args during export; leave them unmanaged during validate/plan/apply")
 	allWorkspaces := flags.Bool("all-workspaces", false, "export all accessible workspaces into <slug>/ directly under the output directory")
 	profile := flags.String("profile", "", "Multica CLI profile for this invocation")
@@ -70,10 +71,14 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "error: --all-workspaces is only valid with export and cannot be combined with --workspace-id")
 		return 2
 	}
+	if *withTeamBridge && command != "export" {
+		fmt.Fprintln(stderr, "error: --with-teambridge is only used with export; plan/apply automatically manage declared teambridge/ bots")
+		return 2
+	}
 	rawCLI := backend.NewCLI(*binary)
 	cli := rawCLI.WithScope(*profile, *workspaceID)
 	if command == "export" {
-		options := exporter.Options{OutputDir: *outputDir, Force: *force, WithoutSecrets: *withoutSecrets}
+		options := exporter.Options{OutputDir: *outputDir, Force: *force, WithoutSecrets: *withoutSecrets, WithTeamBridge: *withTeamBridge}
 		if *allWorkspaces {
 			ex := exporter.WorkspaceExporter{
 				Catalog:    rawCLI.WithScope(*profile, ""),
@@ -158,6 +163,9 @@ func Run(args []string, stdout, stderr io.Writer) int {
 
 func printValidation(w io.Writer, project model.Project) {
 	fmt.Fprintf(w, "Configuration is valid: %d skill(s), %d agent(s), %d squad(s), %d project(s), %d autopilot(s), %d runtime selector(s).\n", len(project.Skills), len(project.Agents), len(project.Squads), len(project.Projects), len(project.Autopilots), len(project.RuntimeSelectors))
+	if len(project.TeamBridge) > 0 {
+		fmt.Fprintf(w, "Optional TeamBridge integration: %d declared bot(s).\n", len(project.TeamBridge))
+	}
 }
 
 func printExport(stdout, stderr io.Writer, result exporter.Result) {
@@ -165,6 +173,9 @@ func printExport(stdout, stderr io.Writer, result exporter.Result) {
 		fmt.Fprintf(stderr, "warning: %s\n", warning)
 	}
 	fmt.Fprintf(stdout, "Exported %d skill(s), %d agent(s), %d squad(s), %d project(s), %d autopilot(s), and %d runtime selector(s) to %s.\n", result.Skills, result.Agents, result.Squads, result.Projects, result.Autopilots, result.Runtimes, result.OutputDir)
+	if result.TeamBridge > 0 {
+		fmt.Fprintf(stdout, "Included %d TeamBridge bot(s) and their reply images.\n", result.TeamBridge)
+	}
 }
 
 func printPlan(w io.Writer, changes []model.Change) {

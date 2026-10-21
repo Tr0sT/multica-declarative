@@ -34,6 +34,8 @@ jobs:
       - run: go build -o ./bin/multica-declarative ./cmd/multica-declarative
       - run: ./bin/multica-declarative --version
       - run: ./bin/multica-declarative validate --config examples/basic/multica.yaml
+      - name: Validate optional TeamBridge example without credentials or a server
+        run: ./bin/multica-declarative validate --config examples/teambridge/multica.yaml
       - name: Validate workspace-set examples without contacting Multica
         run: |
           ./bin/multica-declarative validate --config examples/workspace-set/multica.yaml
@@ -49,3 +51,38 @@ jobs:
           tar -xzf "$archive" -C "$RUNNER_TEMP" multica
       - name: Real CLI contracts and round-trip regressions
         run: MULTICA_BIN="$RUNNER_TEMP/multica" make integration
+
+  teambridge:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Read pinned TeamBridge CLI revision
+        id: fork
+        run: |
+          repository=$(jq -er .repository integration/multica-teambridge.lock.json)
+          revision=$(jq -er .revision integration/multica-teambridge.lock.json)
+          test "$repository" = 'Tr0sT/multica'
+          [[ "$revision" =~ ^[0-9a-f]{40}$ ]]
+          printf 'repository=%s\nrevision=%s\n' "$repository" "$revision" >> "$GITHUB_OUTPUT"
+      - name: Check out pinned fork CLI source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ steps.fork.outputs.repository }}
+          ref: ${{ steps.fork.outputs.revision }}
+          path: .teambridge-cli-source
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: .teambridge-cli-source/server/go.mod
+          cache-dependency-path: |
+            go.sum
+            .teambridge-cli-source/server/go.sum
+          cache: true
+      - name: Build pinned TeamBridge CLI
+        working-directory: .teambridge-cli-source/server
+        run: go build -o "$RUNNER_TEMP/multica-teambridge" ./cmd/multica
+      - name: Real fork CLI TeamBridge contracts and round-trip regressions
+        run: MULTICA_BIN="$RUNNER_TEMP/multica-teambridge" make integration-teambridge

@@ -1,0 +1,6 @@
+apiVersion: multica-declarative/v1alpha1
+
+runtimes:
+  desktop:
+    customName: Main PC
+    provider: codex

@@ -36,6 +36,7 @@ type observedSquad struct {
 }
 
 type inspection struct {
+	teambridge   *teamBridgeState
 	workspace    *workspaceState
 	changes      []model.Change
 	skillChanges map[string]model.Change
@@ -203,6 +204,9 @@ func (r Reconciler) inspect(project model.Project) (inspection, error) {
 		}
 	}
 	if err := r.inspectWorkspace(project, &state); err != nil {
+		return state, err
+	}
+	if err := r.inspectTeamBridge(project, &state); err != nil {
 		return state, err
 	}
 	return state, nil
@@ -379,6 +383,9 @@ func (r Reconciler) Apply(project model.Project, report func(model.Change)) erro
 			}
 			report(change)
 		}
+	}
+	if err := r.applyTeamBridge(project, state, agentIDs, report); err != nil {
+		return err
 	}
 	return r.applyWorkspace(project, state, agentIDs, report)
 }

@@ -236,6 +236,9 @@ func LoadWithOptions(workspacePath string, options LoadOptions) (model.Project, 
 	if err := loadWorkspaceResources(base, &project); err != nil {
 		return model.Project{}, err
 	}
+	if err := loadTeamBridge(base, &project, options); err != nil {
+		return model.Project{}, err
+	}
 	if err := validateWithOptions(project, options); err != nil {
 		return model.Project{}, err
 	}
@@ -553,7 +556,10 @@ func validateWithOptions(p model.Project, options LoadOptions) error {
 	if err := validateWorkspaceReferences(p); err != nil {
 		return err
 	}
-	if !options.AllowEmpty && len(p.Skills)+len(p.Agents)+len(p.Squads)+len(p.Projects)+len(p.Autopilots) == 0 {
+	if err := validateTeamBridgeReferences(p); err != nil {
+		return err
+	}
+	if !options.AllowEmpty && len(p.Skills)+len(p.Agents)+len(p.Squads)+len(p.Projects)+len(p.Autopilots)+len(p.TeamBridge) == 0 {
 		return fmt.Errorf("workspace must declare at least one resource")
 	}
 	skills := map[string]struct{}{}
