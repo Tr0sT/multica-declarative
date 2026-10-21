@@ -13,7 +13,7 @@ and history; Multica remains responsible for runtime behavior.
 
 > Status: early MVP. The declaration format is `v1alpha1` and may change.
 >
-> Compatibility baseline: **Multica 0.6.2**, released October 13, 2026.
+> Compatibility baseline: **Multica 0.6.4**, released October 20, 2026.
 > Existing declarations remain valid. Full skill bodies use the official CLI.
 > No custom CLI build or avatar patch is needed. Legacy `avatarUrl`/`avatarFile`
 > fields are accepted but ignored, without reading files or changing live avatars.
@@ -62,7 +62,7 @@ keys and a state file are added.
 
 ## Requirements
 
-- an authenticated **Multica 0.6.2** CLI and compatible server (the integration baseline);
+- an authenticated **Multica 0.6.4** CLI and compatible server (the integration baseline);
 - Go 1.25+ only when building the reconciler from source.
 
 Verify the Multica profile first:
@@ -236,7 +236,7 @@ Old declarations that omit these collections leave existing server resources unt
 
 See [docs/managed-resources.md](docs/managed-resources.md) for complete examples, secret-file rules,
 and a field-by-field compatibility table. That table documents the managed schema established
-against 0.4.42; the 0.6.2 compatibility update preserves its observe-only fields rather than
+against 0.4.42; subsequent compatibility updates preserve its observe-only fields rather than
 silently expanding what an existing declaration can mutate.
 
 Important compatibility boundary:
