@@ -162,6 +162,7 @@ func (e WorkspaceExporter) Export(options Options) (WorkspaceResult, error) {
 		result.Squads += len(snap.squads)
 		result.Projects += len(snap.projects)
 		result.Autopilots += len(snap.autopilots)
+		result.TeamBridge += len(snap.teambridge)
 		result.Runtimes += len(snap.manifest.Runtimes)
 		for _, warning := range snap.warnings {
 			result.Warnings = append(result.Warnings, fmt.Sprintf("workspace %q: %s", key, warning))

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"os/exec"
 	"sort"
 	"strconv"
@@ -37,6 +38,8 @@ type CLI struct {
 	Binary  string
 	Timeout time.Duration
 	Runner  Runner
+	// HTTPClient is used only by the optional TeamBridge extension.
+	HTTPClient *http.Client
 }
 
 func NewCLI(binary string) *CLI {

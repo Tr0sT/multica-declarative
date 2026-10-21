@@ -13,6 +13,9 @@ import (
 )
 
 func preserveSnapshotDirectories(target string, snapshot *snapshot) error {
+	if err := preserveTeamBridgeDirectories(target, snapshot); err != nil {
+		return err
+	}
 	if err := preserveWorkspaceDirectories(target, snapshot); err != nil {
 		return err
 	}
@@ -140,6 +143,9 @@ func skillName(data []byte) (string, error) {
 }
 
 func writeSnapshot(root string, v snapshot) error {
+	if err := writeTeamBridge(root, v); err != nil {
+		return err
+	}
 	if err := writeWorkspaceResources(root, v); err != nil {
 		return err
 	}
@@ -252,6 +258,15 @@ func validateTarget(target string, force bool) error {
 	return nil
 }
 func installSnapshot(staging, target string, force bool) error {
+	paths := append([]string(nil), generatedPaths...)
+	if info, err := os.Lstat(filepath.Join(staging, "teambridge")); err == nil {
+		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("generated teambridge path must be an ordinary directory")
+		}
+		paths = append(paths, "teambridge")
+	} else if !os.IsNotExist(err) {
+		return err
+	}
 	info, err := os.Lstat(target)
 	if os.IsNotExist(err) {
 		return os.Rename(staging, target)
@@ -293,7 +308,7 @@ func installSnapshot(staging, target string, force bool) error {
 		return errors.Join(errorsSeen...)
 	}
 
-	for _, name := range generatedPaths {
+	for _, name := range paths {
 		destination := filepath.Join(target, name)
 		if _, statErr := os.Lstat(destination); os.IsNotExist(statErr) {
 			continue
@@ -305,7 +320,7 @@ func installSnapshot(staging, target string, force bool) error {
 		}
 		moved = append(moved, name)
 	}
-	for _, name := range generatedPaths {
+	for _, name := range paths {
 		source := filepath.Join(staging, name)
 		if _, statErr := os.Lstat(source); statErr != nil {
 			return rollback(fmt.Errorf("stat generated %s: %w", name, statErr))

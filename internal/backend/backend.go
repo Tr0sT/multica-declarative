@@ -2,6 +2,19 @@ package backend
 
 import "github.com/Tr0sT/multica-declarative/internal/model"
 
+// TeamBridgeOperations is used only by explicitly opted-in fork declarations.
+// The fork has no CLI surface for these operations, so its adapter uses the
+// authenticated, workspace-scoped public API. Core resources still use the CLI.
+type TeamBridgeOperations interface {
+	ListTeamBridgeInstallations() ([]model.TeamBridgeInstallation, error)
+	DownloadTeamBridgeImage(string) (model.TeamBridgeImage, error)
+	UploadTeamBridgeImage(model.TeamBridgeImage) (string, error)
+	VerifyTeamBridgeBot(model.TeamBridgeBotInput, string, []model.TeamBridgeAllowedUser) error
+	InstallTeamBridgeBot(string, model.TeamBridgeBotInput) (model.TeamBridgeInstallation, error)
+	UpdateTeamBridgeBot(string, model.TeamBridgeBotInput) error
+	RevokeTeamBridgeBot(string) error
+}
+
 type Backend interface {
 	ListSkills() ([]model.Skill, error)
 	GetSkill(skillID string) (model.Skill, error)

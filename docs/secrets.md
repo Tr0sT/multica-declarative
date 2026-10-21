@@ -25,7 +25,7 @@ by `agent get` (including redacted data) instead of writing it. It omits these
 
 Non-secret settings inside those fields are also omitted. This deliberate
 tradeoff avoids guessing which arbitrary keys or positional arguments are secret.
-Other agent settings, instructions, skill assignments, avatars, squads, projects,
+Other agent settings, instructions, skill assignments, squads, projects,
 and autopilot configuration continue to be exported normally. Existing webhook
 credential exclusions and workspace MCP-library limitations are unchanged.
 
@@ -91,3 +91,20 @@ in instructions, descriptions, URLs, skill bodies, or supporting scripts/files
 are not detected or scrubbed. Review such content and Git history before sharing
 or publishing a snapshot. Authentication remains the responsibility of the
 selected Multica CLI; this option neither removes task context nor elevates it.
+
+## Optional TeamBridge integration
+
+`export --with-teambridge` includes all public bot configuration and reply image
+bytes. The fork does not expose bot tokens, so even a full export cannot retrieve
+them. Full declarations include an environment-variable reference for supplying
+the token when creating or reactivating a bot; they never contain a fabricated or
+redacted credential. An existing active bot is updated with PATCH, retaining its
+token and installer identity. Reapplying it does not open a referenced token file
+or read its environment variable unless a new pinned allowed account needs
+identity verification.
+
+With `--without-secrets` or `secrets: omit`, TeamBridge credential references are
+unmanaged too. Settings for existing bots still reconcile. A missing or revoked
+bot cannot be installed/reactivated under this policy: preflight fails before
+resource writes rather than inventing a credential or clearing one. See
+[TeamBridge authentication and identity checks](teambridge.md).

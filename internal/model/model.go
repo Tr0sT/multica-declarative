@@ -96,6 +96,7 @@ type SquadSpec struct {
 }
 
 type Project struct {
+	TeamBridge       []TeamBridgeBotSpec
 	WithoutSecrets   bool
 	Projects         []WorkspaceProjectSpec
 	Autopilots       []AutopilotSpec

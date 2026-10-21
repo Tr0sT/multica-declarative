@@ -1,13 +1,16 @@
 # multica-declarative
 
-**Manage Multica agents, skills, squads, projects, and autopilots as code.**
+**Manage Multica agents, skills, squads, projects, autopilots, and optional TeamBridge bots as code.**
 
 `multica-declarative` is a standalone Go CLI that reads version-controlled YAML and
 [Agent Skills](https://agentskills.io/) directories, compares them with one or more Multica workspaces,
 and reconciles the difference through the official `multica` CLI.
 
-The reconciler does not access Multica's database or bypass its CLI for HTTP mutations.
-Multica is used unmodified through its official CLI. Agent and squad avatars
+Core resources use the official CLI. The optional TeamBridge extension uses the
+authenticated public API of [Tr0sT's Multica fork](https://github.com/Tr0sT/multica),
+because that integration has no CLI commands. It is enabled only by an explicit
+export flag or declarations in `teambridge/`. No database access or Multica patches
+are needed. Agent and squad avatars
 are intentionally excluded from export, plan and apply. Git stores desired state
 and history; Multica remains responsible for runtime behavior.
 
@@ -56,6 +59,11 @@ Multica
 - read-only export into round-trippable declarations;
 - reviewable `plan` output;
 - convergent `apply` through the official CLI.
+
+Optional [TeamBridge support](docs/teambridge.md) adds bot-to-agent bindings, server
+and bot identity, access modes and allowlists, conversation context, refusal text
+and image files. Existing declarations and ordinary exports make no integration
+API requests and remain compatible with upstream Multica.
 
 Existing resources are currently matched by exact name. Renaming remains unsafe until stable external
 keys and a state file are added.
@@ -123,6 +131,25 @@ directly under its collection directory using a generated slug.
 
 `--force` replaces only generated `multica.yaml`, `agents/`, `skills/`, `squads/`, `projects/`, and `autopilots/` paths.
 Unrelated files and `.git/` are preserved.
+
+### Include TeamBridge from the fork
+
+```bash
+multica-declarative export --with-teambridge --output-dir ./my-workspace
+multica-declarative plan --config ./my-workspace/multica.yaml
+multica-declarative apply --config ./my-workspace/multica.yaml
+```
+
+The same export flag works with `--all-workspaces` and `--without-secrets`.
+The exported `teambridge/<agent>/bot.yaml` declarations opt subsequent plan/apply
+into the integration automatically. Reply images are copied as real files and
+uploaded with new attachment IDs when necessary. A forced refresh of a snapshot
+containing `teambridge/` requires the flag again.
+
+The fork deliberately does not return existing bot tokens. Settings updates
+preserve those tokens; creating or reactivating a bot requires a separately
+supplied `accessTokenEnv` or `accessTokenFile`. See [the complete field mapping,
+authentication and restore boundaries](docs/teambridge.md).
 
 ## Multiple workspaces
 
@@ -256,6 +283,9 @@ Important compatibility boundary:
 - custom env and MCP values are passed to Multica by file, not embedded in process arguments;
 - unsupported or lossy operations fail explicitly;
 - workspace-set apply checks known capability failures before the first write, but is not transactional.
+- TeamBridge is opt-in; an unavailable extension fails preflight before writes;
+- existing TeamBridge credentials and undeclared bots are preserved; new grants
+  with exported account IDs are verified before applying them.
 
 ## Development
 
@@ -303,7 +333,8 @@ separate tests verify generated Multica CLI arguments and round-trip YAML behavi
 
 - Desired state belongs in Git.
 - Multica remains unmodified. Avatars are intentionally unmanaged.
-- The official CLI is the compatibility boundary.
+- The official CLI is the compatibility boundary for core resources; the optional
+  TeamBridge adapter has a separately documented public API contract.
 - Apply must converge.
 - Destructive and lossy behavior must be explicit.
 - Secret material is declarative state stored in Git beside its agent; plans, logs, shell history,

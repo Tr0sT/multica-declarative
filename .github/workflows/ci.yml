@@ -34,6 +34,8 @@ jobs:
       - run: go build -o ./bin/multica-declarative ./cmd/multica-declarative
       - run: ./bin/multica-declarative --version
       - run: ./bin/multica-declarative validate --config examples/basic/multica.yaml
+      - name: Validate optional TeamBridge example without credentials or a server
+        run: ./bin/multica-declarative validate --config examples/teambridge/multica.yaml
       - name: Validate workspace-set examples without contacting Multica
         run: |
           ./bin/multica-declarative validate --config examples/workspace-set/multica.yaml

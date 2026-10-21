@@ -25,6 +25,7 @@ const (
 var generatedPaths = []string{"multica.yaml", "agents", "skills", "squads", "projects", "autopilots"}
 
 type Options struct {
+	WithTeamBridge bool
 	WithoutSecrets bool
 	OutputDir      string
 	Force          bool
@@ -32,6 +33,7 @@ type Options struct {
 type Result struct {
 	OutputDir                                              string
 	Skills, Agents, Runtimes, Squads, Projects, Autopilots int
+	TeamBridge                                             int
 	Warnings                                               []string
 }
 type Exporter struct {
@@ -39,13 +41,15 @@ type Exporter struct {
 	HTTPClient *http.Client
 }
 type snapshot struct {
-	projects   []exportedProject
-	autopilots []exportedAutopilot
-	manifest   workspaceDocument
-	skills     []exportedSkill
-	agents     []exportedAgent
-	squads     []exportedSquad
-	warnings   []string
+	teambridgeEnabled bool
+	teambridge        []exportedTeamBridge
+	projects          []exportedProject
+	autopilots        []exportedAutopilot
+	manifest          workspaceDocument
+	skills            []exportedSkill
+	agents            []exportedAgent
+	squads            []exportedSquad
+	warnings          []string
 }
 type exportedSkill struct {
 	name, directory, content string
@@ -147,7 +151,7 @@ func (e Exporter) Export(options Options) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	if len(snap.skills)+len(snap.agents)+len(snap.squads)+len(snap.projects)+len(snap.autopilots) == 0 {
+	if len(snap.skills)+len(snap.agents)+len(snap.squads)+len(snap.projects)+len(snap.autopilots)+len(snap.teambridge) == 0 {
 		return Result{}, fmt.Errorf("multica workspace contains no exportable resources")
 	}
 	if err := preserveSnapshotDirectories(absolute, &snap); err != nil {
@@ -171,7 +175,7 @@ func (e Exporter) Export(options Options) (Result, error) {
 	if err := installSnapshot(staging, absolute, options.Force); err != nil {
 		return Result{}, err
 	}
-	return Result{OutputDir: absolute, Skills: len(snap.skills), Agents: len(snap.agents), Runtimes: len(snap.manifest.Runtimes), Squads: len(snap.squads), Projects: len(snap.projects), Autopilots: len(snap.autopilots), Warnings: snap.warnings}, nil
+	return Result{OutputDir: absolute, Skills: len(snap.skills), Agents: len(snap.agents), Runtimes: len(snap.manifest.Runtimes), Squads: len(snap.squads), Projects: len(snap.projects), Autopilots: len(snap.autopilots), TeamBridge: len(snap.teambridge), Warnings: snap.warnings}, nil
 }
 
 func (e Exporter) readSnapshot(options Options) (snapshot, error) {
@@ -430,6 +434,11 @@ func (e Exporter) readSnapshot(options Options) (snapshot, error) {
 	snap := snapshot{manifest: manifest, skills: skills, agents: agents, squads: squads, warnings: warnings}
 	if err := e.readWorkspaceResources(&snap, agentNameByID, squadNames); err != nil {
 		return snapshot{}, err
+	}
+	if options.WithTeamBridge {
+		if err := e.readTeamBridge(&snap, agentNameByID, options); err != nil {
+			return snapshot{}, err
+		}
 	}
 	return snap, nil
 }
