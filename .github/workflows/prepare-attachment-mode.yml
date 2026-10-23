@@ -1,0 +1,51 @@
+name: Prepare attachment settings
+
+on:
+  push:
+    branches: ['chore/multica-cli-0.6.5']
+    paths: ['.github/workflows/prepare-attachment-mode.yml']
+
+permissions:
+  contents: write
+
+concurrency:
+  group: prepare-attachment-mode
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    if: github.repository == 'Tr0sT/multica-declarative' && github.ref == 'refs/heads/chore/multica-cli-0.6.5'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version-file: go.mod
+      - name: Apply source edit and format
+        run: |
+          python3 .github/scripts/prepare-attachment-mode.py
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('integration/teambridge_test.go')
+          text = p.read_text()
+          old = '\t\tf.installed = true\n'
+          assert text.count(old) == 1
+          p.write_text(text.replace(old, old + '\t\tf.installation["status"] = "active"\n'))
+          PY
+          gofmt -w internal integration
+          git diff --check
+          git diff --stat
+      - name: Commit source files only to this maintenance branch
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add internal integration docs README.md
+          git commit -m 'feat: round-trip optional Mattermost attachment settings through the fork CLI'
+          git push origin HEAD:refs/heads/chore/multica-cli-0.6.5
+      - name: Unit checks
+        run: |
+          go vet ./...
+          go test -race ./...
