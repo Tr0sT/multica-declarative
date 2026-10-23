@@ -19,7 +19,7 @@ Use a fork CLI that implements the `teambridge` command group, together with a
 fork server whose integration is configured. The exact fork revision exercised
 in CI is recorded in
 [`integration/multica-teambridge.lock.json`](../integration/multica-teambridge.lock.json).
-Ordinary upstream compatibility is tested independently with official CLI 0.6.4,
+Ordinary upstream compatibility is tested independently with official CLI 0.6.5,
 pinned in [`integration/multica.lock.json`](../integration/multica.lock.json).
 
 Check the selected binary and profile:
@@ -120,6 +120,7 @@ serverUrl: https://teambridge.example.com
 botUserId: aaaaaaaaaaaaaaaaaaaaaaaaaa
 botUsername: nordbotaskhc
 status: active
+attachmentMode: links
 context:
   mode: channel
   lookbackHours: 8760
@@ -148,6 +149,7 @@ cannot be declared twice in one workspace.
 | `serverUrl`, `botUserId` | Yes | Identify the server/account; new credentials are checked against the saved account ID |
 | `botUsername` | Yes | Observed account name; renaming a TeamBridge account is outside this tool |
 | `context` | Yes | Message, thread or channel, including the full supported lookback range |
+| `attachmentMode` | When reported by the fork CLI/server | `none` or `links`; omission leaves the destination unchanged |
 | `accessMode` | Yes | `members`, `anyone` or `allowlist` |
 | `allowedUsers` | Names and stable account IDs | In-place updates preserve IDs; additions with pinned IDs are verified before granting access |
 | Refusal text | Yes | Unicode text up to 4000 characters; empty text selects the server's default reply |
@@ -186,6 +188,38 @@ The fork can retain a dormant list after switching to `members` or `anyone`.
 Such entries are preserved in `observed.json`, with an export warning, and are
 not declared as active grants. The API does not accept an allowlist while those
 modes are selected; the reconciler leaves dormant destination entries untouched.
+
+## Inbound attachments
+
+`attachmentMode` controls how incoming Mattermost files reach the agent:
+
+```yaml
+attachmentMode: links
+```
+
+- `links` forwards incoming attachment metadata with on-demand links. It does not
+  embed or pre-download every attachment into the agent context.
+- `none` excludes incoming attachments. Explicit `none` is an actual setting,
+  not the same as omitting the key.
+
+The setting is independent of message/thread/channel context and refusal images.
+Exports from the current fork preserve its exact value in `bot.yaml` and
+`observed.json`. Both full and secretless snapshots manage this non-secret field.
+Legacy YAML (or explicit YAML null) leaves it unmanaged: ordinary updates do not
+send `attachment_mode`, and reactivation preserves an observed destination value.
+New installations without it use the fork server's default.
+
+Older CLIs/servers that do not report this field produce an export warning, and
+no default value is invented. Applying an explicit value to an existing bot whose
+CLI/server does not report the field fails during preflight, before any workspace
+write. Unknown modes and null/invalid API values fail explicitly. Requested writes
+are checked against the returned value; a server that ignores the field is not
+reported as success. As with other apply errors, an API failure after a request
+may leave partial changes. No compatibility patch or HTTP fallback is used.
+
+Use the updated fork CLI **and** server. CI pins fork commit
+`6c5856c4a54ffbd296d96b812cb14225fd54e210`, which already implements this setting;
+this repository does not modify the fork.
 
 ## Credentials and authentication
 

@@ -115,6 +115,9 @@ func (c *CLI) UpdateTeamBridgeBot(id string, input model.TeamBridgeBotInput) err
 	if item.ID != id || item.Status != "active" {
 		return fmt.Errorf("TeamBridge update returned an unexpected or inactive installation")
 	}
+	if input.AttachmentMode != nil && (item.AttachmentMode == nil || *item.AttachmentMode != *input.AttachmentMode) {
+		return fmt.Errorf("TeamBridge update did not preserve attachmentMode; check fork CLI/server compatibility (the request may have applied other settings)")
+	}
 	return nil
 }
 
@@ -302,6 +305,9 @@ func teamBridgeHeaderValue(value string) bool {
 }
 
 func teamBridgeSettingsBody(input model.TeamBridgeBotInput) (map[string]any, error) {
+	if err := model.ValidateTeamBridgeAttachmentMode(input.AttachmentMode); err != nil {
+		return nil, err
+	}
 	if err := validateTeamBridgeContext(input.Context); err != nil {
 		return nil, err
 	}
@@ -309,6 +315,9 @@ func teamBridgeSettingsBody(input model.TeamBridgeBotInput) (map[string]any, err
 		return nil, err
 	}
 	body := map[string]any{"context": input.Context, "access_mode": input.AccessMode, "denied_reply": input.DeniedReply}
+	if input.AttachmentMode != nil {
+		body["attachment_mode"] = *input.AttachmentMode
+	}
 	switch input.AccessMode {
 	case "members", "anyone":
 		if len(input.AllowedUsernames) != 0 {
@@ -350,6 +359,12 @@ func decodeTeamBridgeInstallation(raw json.RawMessage, workspaceID string) (mode
 	var installation model.TeamBridgeInstallation
 	if json.Unmarshal(raw, &installation) != nil {
 		return model.TeamBridgeInstallation{}, fmt.Errorf("TeamBridge CLI returned invalid installation field types")
+	}
+	if _, present := fields["attachment_mode"]; present && installation.AttachmentMode == nil {
+		return model.TeamBridgeInstallation{}, fmt.Errorf("TeamBridge CLI returned null attachment_mode; update the fork CLI/server")
+	}
+	if err := model.ValidateTeamBridgeAttachmentMode(installation.AttachmentMode); err != nil {
+		return model.TeamBridgeInstallation{}, err
 	}
 	var wireContext struct {
 		Mode                  string `json:"mode"`

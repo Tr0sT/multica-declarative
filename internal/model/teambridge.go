@@ -1,5 +1,7 @@
 package model
 
+import "fmt"
+
 // TeamBridge is the Mattermost-compatible integration in the Tr0sT Multica fork.
 // Its credentials and conversation state are not exposed by the public API.
 const MaxTeamBridgeImageBytes = 5 << 20
@@ -28,13 +30,15 @@ type TeamBridgeReplySpec struct {
 }
 
 type TeamBridgeBotSpec struct {
-	Name            string                  `yaml:"name"`
-	Agent           string                  `yaml:"agent"`
-	ServerURL       string                  `yaml:"serverUrl"`
-	BotUserID       string                  `yaml:"botUserId,omitempty"`
-	BotUsername     string                  `yaml:"botUsername,omitempty"`
-	Status          string                  `yaml:"status"`
-	Context         TeamBridgeContext       `yaml:"context"`
+	Name        string            `yaml:"name"`
+	Agent       string            `yaml:"agent"`
+	ServerURL   string            `yaml:"serverUrl"`
+	BotUserID   string            `yaml:"botUserId,omitempty"`
+	BotUsername string            `yaml:"botUsername,omitempty"`
+	Status      string            `yaml:"status"`
+	Context     TeamBridgeContext `yaml:"context"`
+	// Nil leaves the destination setting unmanaged, including old snapshots.
+	AttachmentMode  *string                 `yaml:"attachmentMode,omitempty"`
 	AccessMode      string                  `yaml:"accessMode"`
 	AllowedUsers    []TeamBridgeAllowedUser `yaml:"allowedUsers,omitempty"`
 	DeniedReply     TeamBridgeReplySpec     `yaml:"deniedReply"`
@@ -53,14 +57,16 @@ type TeamBridgeDeniedReply struct {
 // TeamBridgeInstallation holds every public installation field. IDs and audit
 // timestamps are exported as source metadata, never assigned on another server.
 type TeamBridgeInstallation struct {
-	ID              string                  `json:"id"`
-	WorkspaceID     string                  `json:"workspace_id"`
-	AgentID         string                  `json:"agent_id"`
-	ServerURL       string                  `json:"server_url"`
-	BotUserID       string                  `json:"bot_user_id"`
-	BotUsername     string                  `json:"bot_username"`
-	Status          string                  `json:"status"`
-	Context         TeamBridgeContext       `json:"context"`
+	ID          string            `json:"id"`
+	WorkspaceID string            `json:"workspace_id"`
+	AgentID     string            `json:"agent_id"`
+	ServerURL   string            `json:"server_url"`
+	BotUserID   string            `json:"bot_user_id"`
+	BotUsername string            `json:"bot_username"`
+	Status      string            `json:"status"`
+	Context     TeamBridgeContext `json:"context"`
+	// Nil means that the selected CLI/server did not expose the setting.
+	AttachmentMode  *string                 `json:"attachment_mode,omitempty"`
 	AccessMode      string                  `json:"access_mode"`
 	AllowedUsers    []TeamBridgeAllowedUser `json:"allowed_users"`
 	DeniedReply     TeamBridgeDeniedReply   `json:"denied_reply"`
@@ -74,7 +80,17 @@ type TeamBridgeBotInput struct {
 	ServerURL        string
 	AccessToken      string
 	Context          TeamBridgeContext
+	AttachmentMode   *string
 	AccessMode       string
 	AllowedUsernames []string
 	DeniedReply      TeamBridgeDeniedReply
+}
+
+// ValidateTeamBridgeAttachmentMode preserves omission rather than inventing a
+// default. Unknown future modes must fail explicitly instead of losing state.
+func ValidateTeamBridgeAttachmentMode(mode *string) error {
+	if mode != nil && *mode != "none" && *mode != "links" {
+		return fmt.Errorf("TeamBridge attachmentMode must be none or links; omit it to leave the setting unmanaged")
+	}
+	return nil
 }

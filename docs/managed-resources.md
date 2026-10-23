@@ -1,7 +1,7 @@
 # Managed Multica resources
 
 This document describes the resources and fields supported by `multica-declarative`.
-The current official-CLI integration baseline is Multica 0.6.4; the managed schema was
+The current official-CLI integration baseline is Multica 0.6.5; the managed schema was
 established against 0.4.42. The official, unmodified `multica` CLI remains the compatibility
 boundary for the resources below. They are never changed through direct database access
 or an HTTP mutation bypass. The separately opted-in [TeamBridge extension](teambridge.md)

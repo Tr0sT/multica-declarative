@@ -42,18 +42,19 @@ const (
 // All requests, including the optional extension and image transfer, go through
 // the fork CLI subprocess against an isolated loopback service.
 type teamBridgeFixture struct {
-	mu             sync.Mutex
-	base           *fixture
-	installation   map[string]any
-	image          []byte
-	requests       []request
-	unavailable    bool
-	missingImage   bool
-	storedBotToken string
-	installed      bool
-	uploaded       []byte
-	uploadedName   string
-	remoteRequests []request
+	mu                   sync.Mutex
+	base                 *fixture
+	installation         map[string]any
+	image                []byte
+	requests             []request
+	unavailable          bool
+	missingImage         bool
+	ignoreAttachmentMode bool
+	storedBotToken       string
+	installed            bool
+	uploaded             []byte
+	uploadedName         string
+	remoteRequests       []request
 }
 
 func newTeamBridgeFixture(t *testing.T) (*teamBridgeFixture, *backend.CLI) {
@@ -78,6 +79,7 @@ func newTeamBridgeTransportFixture(t *testing.T, tls bool) (*teamBridgeFixture, 
 			"bot_username": "fixture-bot", "status": "active",
 			"context":           map[string]any{"mode": "channel_extended", "extended_lookback_hours": 8760},
 			"access_mode":       "allowlist",
+			"attachment_mode":   "links",
 			"allowed_users":     []any{map[string]any{"id": teamBridgeAllowedID, "username": "sergey"}},
 			"denied_reply":      map[string]any{"mode": "image", "image_attachment_id": teamBridgeAttachmentID},
 			"installer_user_id": teamBridgeInstallerID,
@@ -156,8 +158,12 @@ func (f *teamBridgeFixture) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		f.installed = true
+		f.installation["status"] = "active"
 		for _, name := range []string{"server_url", "context", "access_mode", "denied_reply"} {
 			f.installation[name] = data[name]
+		}
+		if mode, present := data["attachment_mode"]; present && !f.ignoreAttachmentMode {
+			f.installation["attachment_mode"] = mode
 		}
 		respond(f.installation)
 	case "PATCH " + installationsPath + "/" + teamBridgeInstallationID:
@@ -171,6 +177,9 @@ func (f *teamBridgeFixture) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		for _, name := range []string{"context", "access_mode", "denied_reply"} {
 			f.installation[name] = data[name]
+		}
+		if mode, present := data["attachment_mode"]; present && !f.ignoreAttachmentMode {
+			f.installation["attachment_mode"] = mode
 		}
 		respond(f.installation)
 	case "POST /api/upload-file":

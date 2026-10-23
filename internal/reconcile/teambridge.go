@@ -56,6 +56,9 @@ func (r Reconciler) inspectTeamBridge(p model.Project, s *inspection) error {
 		byAgent[a.AgentID] = a
 	}
 	for _, d := range p.TeamBridge {
+		if err := model.ValidateTeamBridgeAttachmentMode(d.AttachmentMode); err != nil {
+			return fmt.Errorf("TeamBridge bot %q: %w", d.Name, err)
+		}
 		if _, exists := x.bots[d.Name]; exists {
 			return fmt.Errorf("duplicate TeamBridge declaration %q", d.Name)
 		}
@@ -158,7 +161,18 @@ func newPinnedTeamBridgeUsers(d model.TeamBridgeBotSpec, a model.TeamBridgeInsta
 }
 
 func diffTeamBridge(d model.TeamBridgeBotSpec, a model.TeamBridgeInstallation, ops backend.TeamBridgeOperations) ([]string, []string, error) {
+	if err := model.ValidateTeamBridgeAttachmentMode(d.AttachmentMode); err != nil {
+		return nil, nil, err
+	}
 	fields := []string{}
+	if d.AttachmentMode != nil {
+		if a.AttachmentMode == nil {
+			return nil, nil, fmt.Errorf("attachmentMode is managed but the selected fork CLI/server did not report attachment_mode; update both before applying (no changes applied)")
+		}
+		if *d.AttachmentMode != *a.AttachmentMode {
+			fields = append(fields, "attachmentMode")
+		}
+	}
 	if d.Context != a.Context {
 		fields = append(fields, "context")
 	}
@@ -222,7 +236,7 @@ func teamBridgeInput(d model.TeamBridgeBotSpec, imageIDs []string) model.TeamBri
 		}
 	}
 	return model.TeamBridgeBotInput{
-		ServerURL: d.ServerURL, Context: d.Context, AccessMode: d.AccessMode,
+		ServerURL: d.ServerURL, Context: d.Context, AttachmentMode: d.AttachmentMode, AccessMode: d.AccessMode,
 		AllowedUsernames: names,
 		DeniedReply:      model.TeamBridgeDeniedReply{Mode: d.DeniedReply.Mode, Text: d.DeniedReply.Text, ImageAttachmentIDs: imageIDs},
 	}
@@ -252,6 +266,11 @@ func (r Reconciler) applyTeamBridge(p model.Project, s inspection, agentIDs map[
 				imageIDs[i] = id
 			}
 		}
+		// Reactivation uses install. Preserve an observed destination value
+		// when an old declaration leaves the new setting unmanaged.
+		if o.install && o.actual.ID != "" && d.AttachmentMode == nil {
+			d.AttachmentMode = o.actual.AttachmentMode
+		}
 		in := teamBridgeInput(d, imageIDs)
 		if o.install {
 			id := agentIDs[d.Agent]
@@ -272,7 +291,7 @@ func (r Reconciler) applyTeamBridge(p model.Project, s inspection, agentIDs map[
 				return fmt.Errorf("TeamBridge bot %q: %w; the inconsistent installation was revoked when identifiable", d.Name, err)
 			}
 		} else {
-			if hasAnyField(o.change.Fields, "context", "accessMode", "allowedUsers", "deniedReply") {
+			if hasAnyField(o.change.Fields, "context", "attachmentMode", "accessMode", "allowedUsers", "deniedReply") {
 				if err := ops.UpdateTeamBridgeBot(o.actual.ID, in); err != nil {
 					return fmt.Errorf("update TeamBridge bot %q: %w", d.Name, err)
 				}
@@ -291,6 +310,9 @@ func (r Reconciler) applyTeamBridge(p model.Project, s inspection, agentIDs map[
 func verifyInstalledTeamBridge(d model.TeamBridgeBotSpec, agentID string, a model.TeamBridgeInstallation) error {
 	if a.ID == "" || a.AgentID != agentID || a.Status != "active" || canonicalTeamBridgeURL(a.ServerURL) != canonicalTeamBridgeURL(d.ServerURL) || (d.BotUserID != "" && a.BotUserID != d.BotUserID) {
 		return fmt.Errorf("server returned an inconsistent bot identity")
+	}
+	if d.AttachmentMode != nil && (a.AttachmentMode == nil || *a.AttachmentMode != *d.AttachmentMode) {
+		return fmt.Errorf("server did not preserve requested attachmentMode; check fork CLI/server compatibility")
 	}
 	byName := map[string]string{}
 	for _, u := range a.AllowedUsers {
