@@ -7,7 +7,7 @@ import (
 
 func TestLoadTeamBridgeAttachmentMode(t *testing.T) {
 	for _, tc := range []struct {
-		field, wanted string
+		field, wanted  string
 		managed, valid bool
 	}{
 		{"", "", false, true},
@@ -27,9 +27,15 @@ func TestLoadTeamBridgeAttachmentMode(t *testing.T) {
 			writeFile(t, filepath.Join(root, "teambridge/a/bot.yaml"), "name: Bot\nagent: A\nserverUrl: https://mattermost.example.test\n"+tc.field)
 			for _, withoutSecrets := range []bool{false, true} {
 				p, err := LoadWithOptions(manifest, LoadOptions{WithoutSecrets: withoutSecrets})
-				if (err == nil) != tc.valid { t.Fatalf("unexpected validation: %v", err) }
-				if !tc.valid { continue }
-				if len(p.TeamBridge) != 1 { t.Fatal("bot lost") }
+				if (err == nil) != tc.valid {
+					t.Fatalf("unexpected validation: %v", err)
+				}
+				if !tc.valid {
+					continue
+				}
+				if len(p.TeamBridge) != 1 {
+					t.Fatal("bot lost")
+				}
 				mode := p.TeamBridge[0].AttachmentMode
 				if (mode != nil) != tc.managed || (mode != nil && *mode != tc.wanted) {
 					t.Fatal("attachment mode changed or defaulted during load")

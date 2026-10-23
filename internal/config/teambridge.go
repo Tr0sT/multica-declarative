@@ -100,6 +100,9 @@ func normalizeTeamBridge(d *model.TeamBridgeBotSpec) error {
 	if d.Status != "active" && d.Status != "revoked" {
 		return fmt.Errorf("TeamBridge status must be active or revoked")
 	}
+	if err := model.ValidateTeamBridgeAttachmentMode(d.AttachmentMode); err != nil {
+		return err
+	}
 	if d.Context.Mode == "" {
 		d.Context.Mode = "message"
 	}

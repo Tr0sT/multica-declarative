@@ -42,8 +42,15 @@ func (e Exporter) readTeamBridge(s *snapshot, agents map[string]string, options 
 		d := model.TeamBridgeBotSpec{
 			Name: name, Agent: name, ServerURL: item.ServerURL, BotUserID: item.BotUserID,
 			BotUsername: item.BotUsername, Status: item.Status, Context: item.Context,
-			AccessMode: item.AccessMode, AllowedUsers: append([]model.TeamBridgeAllowedUser(nil), item.AllowedUsers...),
+			AttachmentMode: item.AttachmentMode,
+			AccessMode:     item.AccessMode, AllowedUsers: append([]model.TeamBridgeAllowedUser(nil), item.AllowedUsers...),
 			DeniedReply: model.TeamBridgeReplySpec{Mode: item.DeniedReply.Mode, Text: item.DeniedReply.Text},
+		}
+		if err := model.ValidateTeamBridgeAttachmentMode(item.AttachmentMode); err != nil {
+			return fmt.Errorf("TeamBridge bot %q: %w", name, err)
+		}
+		if item.AttachmentMode == nil {
+			s.warnings = append(s.warnings, fmt.Sprintf("TeamBridge bot %q: attachmentMode was not reported by the selected fork CLI/server and is left unmanaged; update both to export this setting", name))
 		}
 		if item.AccessMode != "allowlist" && len(d.AllowedUsers) > 0 {
 			// The fork retains dormant grants when switching away from allowlist,
