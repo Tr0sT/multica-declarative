@@ -2,7 +2,11 @@
 
 Full exports retain the existing behavior: custom environment values are written
 as `custom-env.json`, per-agent MCP configuration as `mcp.json`, and both files are
-referenced by `agent.yaml`. Store full snapshots privately.
+referenced by `agent.yaml`. With `--with-teambridge`, real stored bot tokens are
+also written to private `credentials/bot-token` files. Full export includes
+secrets by default. **Never publish a full snapshot in public Git.** This is a
+snapshot of supported declarative resources, not every internal deployment secret
+or the complete application database.
 
 ## Omit secret-bearing settings
 
@@ -94,23 +98,33 @@ selected Multica CLI; this option neither removes task context nor elevates it.
 
 ## Optional TeamBridge integration
 
-`export --with-teambridge` includes all public bot configuration and reply image
-bytes. The fork does not expose bot tokens, so even a full export cannot retrieve
-them. Full declarations include an environment-variable reference for supplying
-the token when creating or reactivating a bot; they never contain a fabricated or
-redacted credential. An existing active bot is updated through
-`multica teambridge update`, retaining its token and installer identity.
-Reapplying it does not open a referenced token file
-or read its environment variable unless a new pinned allowed account needs
-identity verification.
+`export --with-teambridge` includes public bot configuration, reply image bytes
+and, by default, exact stored bot tokens. The selected fork CLI and server must
+both implement `teambridge token export/import`; token operations require a human
+owner/admin of the selected workspace. A token export failure rejects the full
+snapshot before replacing existing files.
 
-The selected CLI owns Multica authentication and all network requests. When an
-operation needs a bot token, the reconciler passes a private temporary JSON file
-to the CLI and removes it afterward. Token values never appear in command
-arguments or plan output.
+The token is stored in `teambridge/<bot>/credentials/bot-token` (mode `0600`,
+credentials directory `0700` on POSIX), with `accessTokenFile` in `bot.yaml`.
+`accessTokenEnv` remains supported for manually maintained declarations. Full
+plan compares managed tokens in memory; full apply restores a changed existing
+token through `teambridge token import`, or uses it to create/reactivate a bot.
+Token-only updates preserve identity, status, settings, installer, history and
+bindings. Repeated apply performs no redundant token writes. Absent token
+references leave existing credentials unmanaged; an explicit missing/empty
+reference fails preflight.
 
-With `--without-secrets` or `secrets: omit`, TeamBridge credential references are
-unmanaged too. Settings for existing bots still reconcile. A missing or revoked
-bot cannot be installed/reactivated under this policy: preflight fails before
-resource writes rather than inventing a credential or clearing one. See
+The selected CLI owns Multica authentication and all network requests. Private
+temporary files carry credentials and are removed on success or failure. Token
+values and their fingerprints never appear in arguments, stdout/stderr or plan
+diffs. Stored-token export does not require a live Mattermost connection.
+
+With `--without-secrets` or `secrets: omit`, export never invokes secret commands
+or creates token references/files. Import does not read referenced token files,
+read their variables, or read/update server tokens. Settings for existing bots
+still reconcile. Creating or reactivating a bot fails preflight before any
+selected workspace is written because a token is required. A secretless refresh
+removes previously generated tokens identified by the bot's generated-path
+manifest, while preserving unowned local files and Git history. It is not a
+scrubber for credentials in arbitrary user files. See
 [TeamBridge authentication and identity checks](teambridge.md).

@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 
@@ -18,6 +19,7 @@ type observedTeamBridge struct {
 	actual   model.TeamBridgeInstallation
 	change   model.Change
 	install  bool
+	rotate   bool
 	token    string
 	imageIDs []string
 }
@@ -116,23 +118,55 @@ func (r Reconciler) inspectTeamBridge(p model.Project, s *inspection) error {
 			if a.ID != "" {
 				o.change.Fields = append(o.change.Fields, "reinstall")
 			}
-		} else if newUsers := newPinnedTeamBridgeUsers(d, a); len(newUsers) > 0 {
-			// Existing names retain stable IDs in the fork. New names with an
-			// exported ID require verification before granting access.
-			token, err := teamBridgeToken(d, p.WithoutSecrets)
-			if err != nil {
-				return fmt.Errorf("TeamBridge bot %q adds an account with a pinned ID; supply its bot token to verify the account, or explicitly remove the ID to resolve by username: %w", d.Name, err)
+		} else {
+			managed := !p.WithoutSecrets && !d.WithoutSecrets && (d.AccessTokenEnv != "" || d.AccessTokenFile != "")
+			if managed {
+				var err error
+				o.token, err = teamBridgeToken(d, false)
+				if err != nil {
+					return fmt.Errorf("TeamBridge bot %q: %w", d.Name, err)
+				}
+				secrets, ok := r.Backend.(backend.TeamBridgeTokenOperations)
+				if !ok {
+					return fmt.Errorf("TeamBridge bot %q manages a token but the backend lacks the token contract; use the compatible fork CLI/server", d.Name)
+				}
+				current, err := secrets.ExportTeamBridgeToken(a.ID)
+				if err != nil {
+					return fmt.Errorf("TeamBridge bot %q token preflight: %w", d.Name, err)
+				}
+				if !model.ValidTeamBridgeToken(current) {
+					return fmt.Errorf("TeamBridge bot %q returned an empty or invalid stored token", d.Name)
+				}
+				if current != o.token {
+					in := teamBridgeInput(d, o.imageIDs)
+					in.AccessToken, in.AccessMode, in.AllowedUsernames = o.token, "members", nil
+					if err := ops.VerifyTeamBridgeBot(in, a.BotUserID, nil); err != nil {
+						return fmt.Errorf("TeamBridge bot %q token preflight: %w", d.Name, err)
+					}
+					o.rotate = true
+					o.change = makeChange("teambridge", d.Name, append(o.change.Fields, "accessToken"))
+				}
 			}
-			in := teamBridgeInput(d, o.imageIDs)
-			in.AccessToken = token
-			// Existing grants deliberately retain their saved IDs after username
-			// changes. Only newly introduced pinned names need a live lookup.
-			in.AllowedUsernames = make([]string, 0, len(newUsers))
-			for _, user := range newUsers {
-				in.AllowedUsernames = append(in.AllowedUsernames, user.Username)
-			}
-			if err := ops.VerifyTeamBridgeBot(in, a.BotUserID, newUsers); err != nil {
-				return fmt.Errorf("TeamBridge bot %q account preflight: %w", d.Name, err)
+		}
+		if !o.install {
+			if newUsers := newPinnedTeamBridgeUsers(d, a); len(newUsers) > 0 {
+				// Existing names retain stable IDs in the fork. New names with an
+				// exported ID require verification before granting access.
+				token, err := teamBridgeToken(d, p.WithoutSecrets)
+				if err != nil {
+					return fmt.Errorf("TeamBridge bot %q adds an account with a pinned ID; supply its bot token to verify the account, or explicitly remove the ID to resolve by username: %w", d.Name, err)
+				}
+				in := teamBridgeInput(d, o.imageIDs)
+				in.AccessToken = token
+				// Existing grants deliberately retain their saved IDs after username
+				// changes. Only newly introduced pinned names need a live lookup.
+				in.AllowedUsernames = make([]string, 0, len(newUsers))
+				for _, user := range newUsers {
+					in.AllowedUsernames = append(in.AllowedUsernames, user.Username)
+				}
+				if err := ops.VerifyTeamBridgeBot(in, a.BotUserID, newUsers); err != nil {
+					return fmt.Errorf("TeamBridge bot %q account preflight: %w", d.Name, err)
+				}
 			}
 		}
 		x.bots[d.Name] = o
@@ -291,6 +325,11 @@ func (r Reconciler) applyTeamBridge(p model.Project, s inspection, agentIDs map[
 				return fmt.Errorf("TeamBridge bot %q: %w; the inconsistent installation was revoked when identifiable", d.Name, err)
 			}
 		} else {
+			if o.rotate {
+				if err := r.Backend.(backend.TeamBridgeTokenOperations).ImportTeamBridgeToken(o.actual.ID, o.token); err != nil {
+					return fmt.Errorf("restore TeamBridge bot %q token: %w", d.Name, err)
+				}
+			}
 			if hasAnyField(o.change.Fields, "context", "attachmentMode", "accessMode", "allowedUsers", "deniedReply") {
 				if err := ops.UpdateTeamBridgeBot(o.actual.ID, in); err != nil {
 					return fmt.Errorf("update TeamBridge bot %q: %w", d.Name, err)
@@ -349,10 +388,11 @@ func teamBridgeToken(d model.TeamBridgeBotSpec, omit bool) (string, error) {
 		token = os.Getenv(d.AccessTokenEnv)
 	case d.AccessTokenFile != "":
 		clean := filepath.Clean(d.AccessTokenFile)
-		if d.SourceDirectory == "" || filepath.IsAbs(clean) || clean == "." || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+		if d.SourceDirectory == "" || filepath.IsAbs(clean) || strings.Contains(d.AccessTokenFile, "\\") || clean == "." || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
 			return "", fmt.Errorf("accessTokenFile must be a contained relative file")
 		}
 		current := d.SourceDirectory
+		var expected os.FileInfo
 		for _, part := range strings.Split(clean, string(filepath.Separator)) {
 			current = filepath.Join(current, part)
 			info, err := os.Lstat(current)
@@ -362,26 +402,40 @@ func teamBridgeToken(d model.TeamBridgeBotSpec, omit bool) (string, error) {
 			if info.Mode()&os.ModeSymlink != 0 {
 				return "", fmt.Errorf("accessTokenFile must not traverse symlinks")
 			}
+			expected = info
 		}
-		file, err := os.Open(current)
+		if expected == nil || !expected.Mode().IsRegular() {
+			return "", fmt.Errorf("accessTokenFile must be a regular file")
+		}
+		if runtime.GOOS != "windows" && expected.Mode().Perm()&0077 != 0 {
+			return "", fmt.Errorf("accessTokenFile must be private (permissions 0600 or more restrictive)")
+		}
+		root, err := os.OpenRoot(d.SourceDirectory)
+		if err != nil {
+			return "", fmt.Errorf("accessTokenFile declaration directory is unavailable")
+		}
+		defer root.Close()
+		// Root confines the open even if an ordinary path component is replaced
+		// with a symlink after the checks above.
+		file, err := root.Open(clean)
 		if err != nil {
 			return "", fmt.Errorf("accessTokenFile is unreadable")
 		}
 		defer file.Close()
 		info, err := file.Stat()
-		if err != nil || !info.Mode().IsRegular() {
-			return "", fmt.Errorf("accessTokenFile must be a regular file")
+		if err != nil || !info.Mode().IsRegular() || !os.SameFile(expected, info) {
+			return "", fmt.Errorf("accessTokenFile must be an unchanged regular file")
 		}
-		data, err := io.ReadAll(io.LimitReader(file, 16*1024+1))
-		if err != nil || len(data) > 16*1024 {
+		data, err := io.ReadAll(io.LimitReader(file, model.MaxTeamBridgeTokenBytes+1))
+		if err != nil || len(data) > model.MaxTeamBridgeTokenBytes {
 			return "", fmt.Errorf("accessTokenFile must contain at most 16 KiB")
 		}
 		token = string(bytes.TrimSpace(data))
 	default:
-		return "", fmt.Errorf("the API does not export bot tokens; provide accessTokenEnv or accessTokenFile to install this bot")
+		return "", fmt.Errorf("creating or reactivating a bot requires accessTokenEnv or accessTokenFile")
 	}
 	token = strings.TrimSpace(token)
-	if token == "" || len(token) > 16*1024 || strings.ContainsAny(token, "\r\n\x00") {
+	if !model.ValidTeamBridgeToken(token) {
 		return "", fmt.Errorf("bot token is missing or invalid; populate its accessTokenEnv/accessTokenFile without including secrets in command arguments")
 	}
 	return token, nil

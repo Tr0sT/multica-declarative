@@ -51,6 +51,8 @@ type teamBridgeFixture struct {
 	missingImage         bool
 	ignoreAttachmentMode bool
 	storedBotToken       string
+	validBotTokens       map[string]bool
+	tokenFailureStatus   int
 	installed            bool
 	uploaded             []byte
 	uploadedName         string
@@ -73,6 +75,7 @@ func newTeamBridgeTransportFixture(t *testing.T, tls bool) (*teamBridgeFixture, 
 	}
 	f := &teamBridgeFixture{
 		base: base, image: imageBytes.Bytes(), storedBotToken: "synthetic-private-bot-token", installed: true,
+		validBotTokens: map[string]bool{"synthetic-private-bot-token": true},
 		installation: map[string]any{
 			"id": teamBridgeInstallationID, "workspace_id": workspaceID, "agent_id": agentID,
 			"server_url": "https://teambridge.example.test", "bot_user_id": teamBridgeBotID,
@@ -146,6 +149,26 @@ func (f *teamBridgeFixture) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch r.Method + " " + r.URL.Path {
+	case "GET " + installationsPath + "/" + teamBridgeInstallationID + "/token":
+		if f.tokenFailureStatus != 0 {
+			http.Error(w, "synthetic-private-bot-token must never reach diagnostics", f.tokenFailureStatus)
+			return
+		}
+		if !f.installed {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Cache-Control", "no-store")
+		respond(map[string]any{"installation_id": teamBridgeInstallationID, "workspace_id": workspaceID, "access_token": f.storedBotToken})
+	case "PUT " + installationsPath + "/" + teamBridgeInstallationID + "/token":
+		token, _ := data["access_token"].(string)
+		if !f.installed || !f.validBotTokens[token] {
+			http.Error(w, "invalid token for this bot", http.StatusBadRequest)
+			return
+		}
+		updated := f.storedBotToken != token
+		f.storedBotToken = token
+		respond(map[string]any{"installation_id": teamBridgeInstallationID, "workspace_id": workspaceID, "updated": updated})
 	case "GET " + installationsPath:
 		installations := []any{}
 		if f.installed {
@@ -229,7 +252,7 @@ func (f *teamBridgeFixture) serve(w http.ResponseWriter, r *http.Request) {
 
 func (f *teamBridgeFixture) serveRemoteAccounts(w http.ResponseWriter, r *http.Request) {
 	f.remoteRequests = append(f.remoteRequests, request{method: r.Method, path: r.URL.Path})
-	if r.Header.Get("Authorization") != "Bearer "+f.storedBotToken {
+	if !f.validBotTokens[strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")] {
 		http.Error(w, "unexpected bot credential", http.StatusUnauthorized)
 		return
 	}
@@ -263,7 +286,7 @@ func (f *teamBridgeFixture) mutations() []request {
 
 func TestForkCLITeamBridgeRoundTrip(t *testing.T) {
 	for _, withoutSecrets := range []bool{false, true} {
-		name := "with-token-reference"
+		name := "with-token-value"
 		if withoutSecrets {
 			name = "without-secrets"
 		}
@@ -276,7 +299,7 @@ func TestForkCLITeamBridgeRoundTrip(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if result.TeamBridge != 1 || !strings.Contains(strings.Join(result.Warnings, "\n"), "tokens") {
+			if result.TeamBridge != 1 {
 				t.Fatalf("unexpected extension result: %#v", result)
 			}
 			manifest := filepath.Join(dir, "multica.yaml")
@@ -292,13 +315,23 @@ func TestForkCLITeamBridgeRoundTrip(t *testing.T) {
 				bot.DeniedReply.Mode != "images" || len(bot.DeniedReply.Images) != 1 || !bytes.Equal(bot.DeniedReply.Images[0].Data, f.image) {
 				t.Fatalf("extended context or single image was not normalized losslessly: %#v", bot)
 			}
-			if withoutSecrets != project.WithoutSecrets || (withoutSecrets && bot.AccessTokenEnv != "") || (!withoutSecrets && bot.AccessTokenEnv == "") {
-				t.Fatal("secret policy or separate token reference was not preserved")
+			if withoutSecrets != project.WithoutSecrets || bot.AccessTokenEnv != "" || (withoutSecrets && bot.AccessTokenFile != "") || (!withoutSecrets && bot.AccessTokenFile != "credentials/bot-token") {
+				t.Fatal("secret policy or exported token file reference was not preserved")
 			}
 			if len(bot.AllowedUsers) != 1 || bot.AllowedUsers[0] != (model.TeamBridgeAllowedUser{ID: teamBridgeAllowedID, Username: "sergey"}) {
 				t.Fatal("allowed account identity was not preserved")
 			}
 			for path, data := range teamBridgeSnapshot(t, dir) {
+				if !withoutSecrets && strings.HasSuffix(filepath.ToSlash(path), "/credentials/bot-token") {
+					if string(data) != f.storedBotToken {
+						t.Fatal("the exported token value changed")
+					}
+					info, err := os.Stat(filepath.Join(dir, path))
+					if err != nil || info.Mode().Perm() != 0600 {
+						t.Fatal("the exported token file is not private")
+					}
+					continue
+				}
 				if bytes.Contains(data, []byte(f.storedBotToken)) {
 					t.Fatalf("private bot token appeared in %s", path)
 				}
@@ -309,6 +342,9 @@ func TestForkCLITeamBridgeRoundTrip(t *testing.T) {
 			}
 			if len(f.mutations()) != 0 || len(f.base.mutations()) != 0 {
 				t.Fatal("unchanged exported configuration caused mutations")
+			}
+			if withoutSecrets && teamBridgeTokenRequests(f) != 0 {
+				t.Fatal("secretless export/import contacted token operations")
 			}
 
 			// Exercise the file format again before applying a real settings diff.
@@ -362,7 +398,7 @@ func TestForkCLITeamBridgeIsOptIn(t *testing.T) {
 }
 
 func TestForkCLITeamBridgeFailedRefreshPreservesSnapshot(t *testing.T) {
-	for _, missing := range []string{"extension", "image"} {
+	for _, missing := range []string{"extension", "image", "token"} {
 		t.Run(missing, func(t *testing.T) {
 			f, cli := newTeamBridgeFixture(t)
 			dir := filepath.Join(t.TempDir(), "snapshot")
@@ -373,6 +409,9 @@ func TestForkCLITeamBridgeFailedRefreshPreservesSnapshot(t *testing.T) {
 			before := teamBridgeSnapshot(t, dir)
 			f.mu.Lock()
 			f.unavailable, f.missingImage = missing == "extension", missing == "image"
+			if missing == "token" {
+				f.tokenFailureStatus = http.StatusNotFound
+			}
 			f.mu.Unlock()
 			_, err := ex.Export(exporter.Options{OutputDir: dir, WithTeamBridge: true, Force: true})
 			if err == nil || !strings.Contains(err.Error(), "404") {
@@ -401,7 +440,7 @@ func (r *teamBridgeSecretRunner) Run(ctx context.Context, binary string, args ..
 		if strings.Contains(arg, r.secret) {
 			r.t.Fatal("a bot credential was passed through process arguments")
 		}
-		if arg == "--config-file" && i+1 < len(args) {
+		if (arg == "--config-file" || arg == "--token-file") && i+1 < len(args) {
 			path := args[i+1]
 			info, err := os.Stat(path)
 			if err != nil || info.Mode().Perm() != 0600 {
@@ -423,7 +462,6 @@ func TestForkCLITeamBridgeInstallVerifiesTokenAndTransfersImage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv(project.TeamBridge[0].AccessTokenEnv, f.storedBotToken)
 	f.mu.Lock()
 	f.installed = false
 	f.mu.Unlock()
@@ -485,6 +523,18 @@ func TestForkCLITeamBridgeInstallVerifiesTokenAndTransfersImage(t *testing.T) {
 }
 
 func TestForkCLITeamBridgeWorkspaceSetPreflightBeforeAnyWrite(t *testing.T) {
+	for _, withoutSecrets := range []bool{false, true} {
+		name := "token-unavailable"
+		if withoutSecrets {
+			name = "extension-unavailable"
+		}
+		t.Run(name, func(t *testing.T) {
+			testForkCLITeamBridgeWorkspaceSetPreflight(t, withoutSecrets)
+		})
+	}
+}
+
+func testForkCLITeamBridgeWorkspaceSetPreflight(t *testing.T, withoutSecrets bool) {
 	const secondWS = "00000000-0000-4000-8000-000000000104"
 	const poisonedWS = "00000000-0000-4000-8000-000000000999"
 	f, cli := newTeamBridgeFixture(t)
@@ -507,7 +557,7 @@ func TestForkCLITeamBridgeWorkspaceSetPreflightBeforeAnyWrite(t *testing.T) {
 			state.Lock()
 			unavailable := secondUnavailable
 			state.Unlock()
-			if unavailable {
+			if unavailable && withoutSecrets {
 				http.NotFound(w, r)
 				return
 			}
@@ -518,6 +568,20 @@ func TestForkCLITeamBridgeWorkspaceSetPreflightBeforeAnyWrite(t *testing.T) {
 			_ = json.Unmarshal(encoded, &bot)
 			bot["workspace_id"], bot["bot_user_id"] = secondWS, "yyyyyyyyyyyyyyyyyyyyyyyyyy"
 			_ = json.NewEncoder(w).Encode(map[string]any{"installations": []any{bot}, "configured": true, "install_supported": true})
+			return
+		}
+		if r.URL.Path == "/api/workspaces/"+secondWS+"/mattermost/installations/"+teamBridgeInstallationID+"/token" && r.Method == http.MethodGet {
+			state.Lock()
+			unavailable := secondUnavailable
+			state.Unlock()
+			if unavailable {
+				http.Error(w, "token export denied", http.StatusForbidden)
+				return
+			}
+			f.mu.Lock()
+			token := f.storedBotToken
+			f.mu.Unlock()
+			_ = json.NewEncoder(w).Encode(map[string]any{"installation_id": teamBridgeInstallationID, "workspace_id": secondWS, "access_token": token})
 			return
 		}
 		if r.URL.Path == "/api/workspaces/"+secondWS+"/mcp-servers" && r.Method == http.MethodGet {
@@ -539,7 +603,7 @@ func TestForkCLITeamBridgeWorkspaceSetPreflightBeforeAnyWrite(t *testing.T) {
 	cli.Runner = runner
 	dir := filepath.Join(t.TempDir(), "snapshot")
 	ex := exporter.WorkspaceExporter{Catalog: cli, BackendFor: func(id string) backend.Backend { return cli.WithScope("", id) }}
-	if result, err := ex.Export(exporter.Options{OutputDir: dir, WithTeamBridge: true, WithoutSecrets: true}); err != nil || result.TeamBridge != 2 {
+	if result, err := ex.Export(exporter.Options{OutputDir: dir, WithTeamBridge: true, WithoutSecrets: withoutSecrets}); err != nil || result.TeamBridge != 2 {
 		t.Fatalf("workspace-set export failed: %#v %v", result, err)
 	}
 	skillPath := filepath.Join(dir, "a", "skills", "fixture", "SKILL.md")

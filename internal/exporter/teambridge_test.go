@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -21,6 +22,9 @@ type teamBridgeExportBackend struct {
 	listErr       error
 	imageErr      error
 	calls         int
+	tokenCalls    int
+	token         string
+	tokenErr      error
 }
 
 var _ backend.TeamBridgeOperations = (*teamBridgeExportBackend)(nil)
@@ -54,9 +58,16 @@ func (*teamBridgeExportBackend) UpdateTeamBridgeBot(string, model.TeamBridgeBotI
 }
 func (*teamBridgeExportBackend) RevokeTeamBridgeBot(string) error { panic("mutation") }
 
+func (f *teamBridgeExportBackend) ExportTeamBridgeToken(string) (string, error) {
+	f.tokenCalls++
+	return f.token, f.tokenErr
+}
+func (*teamBridgeExportBackend) ImportTeamBridgeToken(string, string) error { panic("mutation") }
+
 func teamBridgeExportFixture() *teamBridgeExportBackend {
 	return &teamBridgeExportBackend{
 		fakeBackend: exampleBackend(),
+		token:       "synthetic-exported-bot-token",
 		installations: []model.TeamBridgeInstallation{{
 			ID: "installation-1", WorkspaceID: "workspace-1", AgentID: "agent-1",
 			ServerURL: "https://chat.example.com", BotUserID: "aaaaaaaaaaaaaaaaaaaaaaaaaa", BotUsername: "support",
@@ -81,7 +92,7 @@ func TestTeamBridgeExportOptInRoundTrip(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if result.TeamBridge != 1 || b.calls != 3 || !strings.Contains(strings.Join(result.Warnings, " "), "tokens are not exposed") {
+			if result.TeamBridge != 1 || b.calls != 3 || b.tokenCalls != map[bool]int{false: 1, true: 0}[without] {
 				t.Fatalf("incomplete result: %+v calls=%d", result, b.calls)
 			}
 			p, err := config.Load(filepath.Join(out, "multica.yaml"))
@@ -95,8 +106,27 @@ func TestTeamBridgeExportOptInRoundTrip(t *testing.T) {
 			if len(d.DeniedReply.Images) != 2 || !bytes.Equal(d.DeniedReply.Images[0].Data, b.images["image-2"].Data) || !bytes.Equal(d.DeniedReply.Images[1].Data, b.images["image-1"].Data) {
 				t.Fatal("image contents/order lost")
 			}
-			if without && d.AccessTokenEnv != "" || !without && !strings.HasPrefix(d.AccessTokenEnv, "MULTICA_TEAMBRIDGE_SUPPORT_") {
-				t.Fatalf("token reference policy incorrect: %q", d.AccessTokenEnv)
+			if d.AccessTokenEnv != "" || without && d.AccessTokenFile != "" || !without && d.AccessTokenFile != teamBridgeGeneratedToken {
+				t.Fatal("token reference policy incorrect")
+			}
+			tokenPath := filepath.Join(out, "teambridge/unity-developer", teamBridgeGeneratedToken)
+			if without {
+				if _, err := os.Stat(tokenPath); !os.IsNotExist(err) {
+					t.Fatal("omitted token file exists")
+				}
+			} else {
+				token, err := os.ReadFile(tokenPath)
+				if err != nil || string(token) != b.token {
+					t.Fatal("exact token value not exported")
+				}
+				info, err := os.Stat(tokenPath)
+				if err != nil || runtime.GOOS != "windows" && info.Mode().Perm() != 0600 {
+					t.Fatal("token is not private")
+				}
+				info, err = os.Stat(filepath.Dir(tokenPath))
+				if err != nil || runtime.GOOS != "windows" && info.Mode().Perm() != 0700 {
+					t.Fatal("token directory is not private")
+				}
 			}
 			metadata, err := os.ReadFile(filepath.Join(out, "teambridge/unity-developer/observed.json"))
 			if err != nil || !bytes.Contains(metadata, []byte(`"installer_user_id": "installer-1"`)) || !bytes.Contains(metadata, []byte(`"image-2"`)) || !bytes.Contains(metadata, []byte(`"updated_at"`)) {
@@ -188,8 +218,9 @@ func TestTeamBridgeWorkspaceSetExportAndSecretlessRefresh(t *testing.T) {
 	if err != nil || result.TeamBridge != 1 {
 		t.Fatalf("workspace set export: %+v %v", result, err)
 	}
-	secretPath := filepath.Join(out, "nord/teambridge/unity-developer/old-token.txt")
-	if err := os.WriteFile(secretPath, []byte("old synthetic secret"), 0600); err != nil {
+	secretPath := filepath.Join(out, "nord/teambridge/unity-developer", teamBridgeGeneratedToken)
+	userPath := filepath.Join(out, "nord/teambridge/unity-developer/user-notes.txt")
+	if err := os.WriteFile(userPath, []byte("keep user file"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := e.Export(Options{OutputDir: out, WithTeamBridge: true, Force: true, WithoutSecrets: true}); err != nil {
@@ -197,6 +228,9 @@ func TestTeamBridgeWorkspaceSetExportAndSecretlessRefresh(t *testing.T) {
 	}
 	if _, err := os.Stat(secretPath); !os.IsNotExist(err) {
 		t.Fatal("secretless refresh retained a previous generated token file")
+	}
+	if data, err := os.ReadFile(userPath); err != nil || string(data) != "keep user file" {
+		t.Fatal("secretless refresh destroyed user file")
 	}
 	set, err := workspace.Load(filepath.Join(out, "multica.yaml"), config.LoadOptions{})
 	if err != nil || !set.Entries[0].Project.TeamBridge[0].WithoutSecrets {
@@ -207,57 +241,37 @@ func TestTeamBridgeWorkspaceSetExportAndSecretlessRefresh(t *testing.T) {
 	}
 }
 
-func TestTeamBridgeTokenReferenceSupportsUnicodeNamesAndDifferentServers(t *testing.T) {
-	a := teamBridgeTokenEnv(model.TeamBridgeInstallation{ServerURL: "https://a.example.com", BotUserID: "aaaaaaaaaaaaaaaaaaaaaaaaaa", BotUsername: "бот"})
-	b := teamBridgeTokenEnv(model.TeamBridgeInstallation{ServerURL: "https://b.example.com", BotUserID: "aaaaaaaaaaaaaaaaaaaaaaaaaa", BotUsername: "бот"})
-	if a == b || strings.ContainsAny(a, "бот") || !strings.HasPrefix(a, "MULTICA_TEAMBRIDGE_") {
-		t.Fatalf("invalid or ambiguous token refs: %q %q", a, b)
-	}
-}
-
-func TestTeamBridgeFullRefreshPreservesTokenEnvAndProtectsLocalTokenFiles(t *testing.T) {
+func TestTeamBridgeFullRefreshUpdatesGeneratedTokensAndPreservesLocalFiles(t *testing.T) {
 	b := teamBridgeExportFixture()
 	e := Exporter{Backend: b}
 	out := filepath.Join(t.TempDir(), "snapshot")
 	if _, err := e.Export(Options{OutputDir: out, WithTeamBridge: true}); err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(out, "teambridge/unity-developer/bot.yaml")
-	data, err := os.ReadFile(path)
-	if err != nil {
+	root := filepath.Join(out, "teambridge/unity-developer")
+	local := filepath.Join(root, "user-token.txt")
+	if err := os.WriteFile(local, []byte("synthetic-user-secret"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	data = bytes.ReplaceAll(data, []byte(teamBridgeTokenEnv(b.installations[0])), []byte("MY_EXISTING_BOT_TOKEN"))
-	if err := os.WriteFile(path, data, 0644); err != nil {
-		t.Fatal(err)
-	}
+	b.token = "synthetic-new-exported-token"
 	if _, err := e.Export(Options{OutputDir: out, WithTeamBridge: true, Force: true}); err != nil {
 		t.Fatal(err)
 	}
-	data, err = os.ReadFile(path)
-	if err != nil || !bytes.Contains(data, []byte("accessTokenEnv: MY_EXISTING_BOT_TOKEN")) {
-		t.Fatal("custom token environment reference overwritten")
+	data, err := os.ReadFile(filepath.Join(root, teamBridgeGeneratedToken))
+	if err != nil || string(data) != b.token {
+		t.Fatal("generated token was not refreshed")
 	}
-	data = bytes.ReplaceAll(data, []byte("accessTokenEnv: MY_EXISTING_BOT_TOKEN"), []byte("accessTokenFile: token.txt"))
-	if err := os.WriteFile(path, data, 0644); err != nil {
-		t.Fatal(err)
-	}
-	secretPath := filepath.Join(filepath.Dir(path), "token.txt")
-	if err := os.WriteFile(secretPath, []byte("synthetic-only-local-copy"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := e.Export(Options{OutputDir: out, WithTeamBridge: true, Force: true}); err == nil || !strings.Contains(err.Error(), "accessTokenFile") {
-		t.Fatalf("full refresh would discard a local credential: %v", err)
-	}
-	secret, err := os.ReadFile(secretPath)
-	if err != nil || string(secret) != "synthetic-only-local-copy" {
-		t.Fatal("failed full refresh destroyed the local token file")
+	if data, err := os.ReadFile(local); err != nil || string(data) != "synthetic-user-secret" {
+		t.Fatal("user file lost")
 	}
 	if _, err := e.Export(Options{OutputDir: out, WithTeamBridge: true, Force: true, WithoutSecrets: true}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(secretPath); !os.IsNotExist(err) {
-		t.Fatal("explicit secretless refresh retained an old token file")
+	if _, err := os.Stat(filepath.Join(root, teamBridgeGeneratedToken)); !os.IsNotExist(err) {
+		t.Fatal("generated token retained by secretless refresh")
+	}
+	if data, err := os.ReadFile(local); err != nil || string(data) != "synthetic-user-secret" {
+		t.Fatal("secretless refresh destroyed unowned local file")
 	}
 }
 

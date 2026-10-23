@@ -41,15 +41,16 @@ type Exporter struct {
 	HTTPClient *http.Client
 }
 type snapshot struct {
-	teambridgeEnabled bool
-	teambridge        []exportedTeamBridge
-	projects          []exportedProject
-	autopilots        []exportedAutopilot
-	manifest          workspaceDocument
-	skills            []exportedSkill
-	agents            []exportedAgent
-	squads            []exportedSquad
-	warnings          []string
+	teambridgeEnabled   bool
+	teambridge          []exportedTeamBridge
+	teambridgePreserved []preservedTeamBridgeFile
+	projects            []exportedProject
+	autopilots          []exportedAutopilot
+	manifest            workspaceDocument
+	skills              []exportedSkill
+	agents              []exportedAgent
+	squads              []exportedSquad
+	warnings            []string
 }
 type exportedSkill struct {
 	name, directory, content string

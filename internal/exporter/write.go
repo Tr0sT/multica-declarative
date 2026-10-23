@@ -288,7 +288,12 @@ func installSnapshot(staging, target string, force bool) error {
 	if err != nil {
 		return err
 	}
-	defer os.RemoveAll(backup)
+	removeBackup := true
+	defer func() {
+		if removeBackup {
+			_ = os.RemoveAll(backup)
+		}
+	}()
 
 	moved := []string{}
 	installed := []string{}
@@ -296,14 +301,19 @@ func installSnapshot(staging, target string, force bool) error {
 		errorsSeen := []error{cause}
 		for index := len(installed) - 1; index >= 0; index-- {
 			if removeErr := os.RemoveAll(filepath.Join(target, installed[index])); removeErr != nil {
+				removeBackup = false
 				errorsSeen = append(errorsSeen, fmt.Errorf("remove partially installed %s: %w", installed[index], removeErr))
 			}
 		}
 		for index := len(moved) - 1; index >= 0; index-- {
 			name := moved[index]
 			if restoreErr := os.Rename(filepath.Join(backup, name), filepath.Join(target, name)); restoreErr != nil {
+				removeBackup = false
 				errorsSeen = append(errorsSeen, fmt.Errorf("restore previous %s: %w", name, restoreErr))
 			}
+		}
+		if !removeBackup {
+			errorsSeen = append(errorsSeen, fmt.Errorf("previous snapshot backup retained at %s for recovery", backup))
 		}
 		return errors.Join(errorsSeen...)
 	}

@@ -182,7 +182,6 @@ func TestForkCLITeamBridgeAttachmentModeInstallAndReactivate(t *testing.T) {
 				f.mu.Unlock()
 			}
 			p, _, _ := exportAttachmentProject(t, cli, false)
-			t.Setenv(p.TeamBridge[0].AccessTokenEnv, f.storedBotToken)
 			wanted := "none"
 			if reactivate {
 				wanted = "links"

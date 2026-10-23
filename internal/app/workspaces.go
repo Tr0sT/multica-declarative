@@ -38,7 +38,7 @@ func flatExportTarget(output, explicitID string) (id string, omit bool, err erro
 func runWorkspaceSet(command string, set *workspace.Set, catalog backend.WorkspaceLister, factory func(string) backend.Backend, stdout, stderr io.Writer) error {
 	for _, entry := range set.Entries {
 		if entry.Project.WithoutSecrets {
-			fmt.Fprintf(stderr, "notice: workspace %q secret-bearing agent fields are unmanaged; existing values will not be changed\n", entry.Key)
+			fmt.Fprintf(stderr, "notice: workspace %q secret-bearing agent fields and TeamBridge tokens are unmanaged; existing values will not be changed\n", entry.Key)
 		}
 	}
 	if command == "validate" {
