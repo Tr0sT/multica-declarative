@@ -3,8 +3,23 @@ package model
 import "fmt"
 
 // TeamBridge is the Mattermost-compatible integration in the Tr0sT Multica fork.
-// Its credentials and conversation state are not exposed by the public API.
+// Its credentials use a separate administrative CLI contract; ordinary resources
+// and conversation observations never contain token values.
 const MaxTeamBridgeImageBytes = 5 << 20
+
+const MaxTeamBridgeTokenBytes = 16 << 10
+
+func ValidTeamBridgeToken(token string) bool {
+	if len(token) == 0 || len(token) > MaxTeamBridgeTokenBytes {
+		return false
+	}
+	for _, b := range []byte(token) {
+		if b <= 0x20 || b >= 0x7f {
+			return false
+		}
+	}
+	return true
+}
 
 type TeamBridgeContext struct {
 	Mode          string `json:"mode" yaml:"mode"`

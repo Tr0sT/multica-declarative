@@ -98,7 +98,7 @@ func (c *CLI) UpdateTeamBridgeBot(id string, input model.TeamBridgeBotInput) err
 		return fmt.Errorf("TeamBridge update requires a full installation UUID")
 	}
 	if input.AccessToken != "" {
-		return fmt.Errorf("TeamBridge settings updates preserve the existing token; use the explicit installation operation to rotate it")
+		return fmt.Errorf("TeamBridge settings updates preserve the existing token; use the separate token import operation to restore it")
 	}
 	body, err := teamBridgeSettingsBody(input)
 	if err != nil {
@@ -271,7 +271,12 @@ func teamBridgeTempDir() (string, error) {
 		_ = os.RemoveAll(dir)
 		return "", fmt.Errorf("cannot protect TeamBridge command directory")
 	}
-	absolute, err := filepath.Abs(dir)
+	// System temporary roots can be aliases (for example /var on macOS).
+	// Canonicalize our private directory before the CLI's no-symlink checks.
+	absolute, err := filepath.EvalSymlinks(dir)
+	if err == nil {
+		absolute, err = filepath.Abs(absolute)
+	}
 	if err != nil {
 		_ = os.RemoveAll(dir)
 		return "", fmt.Errorf("cannot resolve TeamBridge command directory")

@@ -15,8 +15,10 @@ authentication files or access a database.
 
 ## CLI requirements
 
-Use a fork CLI that implements the `teambridge` command group, together with a
-fork server whose integration is configured. The exact fork revision exercised
+Use a fork CLI that implements `teambridge token export/import`, together with a
+fork server supporting its administrative token API and a configured integration.
+The ordinary list endpoint remains secret-free. Full exports fail explicitly
+when either side lacks the contract or the selected human is not an owner/admin. The exact fork revision exercised
 in CI is recorded in
 [`integration/multica-teambridge.lock.json`](../integration/multica-teambridge.lock.json).
 Ordinary upstream compatibility is tested independently with official CLI 0.6.5,
@@ -54,6 +56,8 @@ Every invocation requests `--output json` and carries the same `--profile` and
 | `teambridge list` | Read the complete public installation list and capability flags |
 | `teambridge install --agent UUID --config-file PATH` | Create/reactivate a bot using a private JSON payload |
 | `teambridge update UUID --config-file PATH` | Change settings while preserving the stored token and installer |
+| `teambridge token export UUID --output-file PATH` | Export the stored token to a new private file; stdout contains safe IDs and `exported: true` |
+| `teambridge token import UUID --token-file PATH` | Restore only the token, keeping identity, status, settings, installer and bindings; stdin is also supported |
 | `teambridge revoke UUID` | Revoke a declared installation |
 | `teambridge verify --config-file PATH` | Check bot and allowed-account identities without modifying them |
 | `teambridge image download UUID --output-file PATH` | Download a standalone refusal image and return its metadata |
@@ -155,7 +159,7 @@ cannot be declared twice in one workspace.
 | Refusal text | Yes | Unicode text up to 4000 characters; empty text selects the server's default reply |
 | Refusal images | Actual bytes | Validates, compares and uploads standalone workspace images as needed |
 | `status` | Active or revoked | Explicit revoke is supported; reactivation needs a supplied token |
-| Bot access token | Not exposed by the server/CLI | Existing token is preserved; env/file input is required for creation/reactivation |
+| Bot access token | Exported via the owner/admin human token contract to `credentials/bot-token` | Managed tokens are compared privately and restored without reinstall; absent references or `secrets: omit` leave the destination token unchanged |
 | Installation/installer IDs and timestamps | `observed.json` | Source observations only, not writable restore fields |
 
 Context modes are `message`, `thread` and `channel`. Message/thread use a zero
@@ -239,21 +243,34 @@ profile files nor implements a separate authentication path. Existing-bot
 settings changes use `teambridge update`, preserving the original token and
 installer, whose permissions can be relevant to public/allowlist runs.
 
-**Existing bot tokens cannot be exported.** This is an intentional server API
-boundary. A full export writes a deterministic `accessTokenEnv` reference; its
-value is not fetched or written. A normal in-place import does not need it.
-
-To create or reactivate a bot, supply the referenced environment variable using
-your normal secret-management mechanism, or change the declaration to:
+**Full export includes the stored bot token by default** when `--with-teambridge`
+selects the integration. No extra token flag is needed. The exporter calls
+`teambridge token export`, retains the exact value in a private file, and writes:
 
 ```yaml
 accessTokenFile: credentials/bot-token
 ```
 
-The file contains only the bot token and is relative to the bot directory. Use
-either the environment reference or the file reference. Token files may be absent
-during `validate` and ordinary in-place apply; their contents are read only when
-required. New secret material never appears in subprocess arguments or plans.
+The file is relative to the bot directory, has mode `0600`, and its credentials
+directory has mode `0700` on POSIX. The token never appears in `observed.json`,
+ordinary YAML, diagnostics, command arguments or plans. **Full snapshots contain
+live secrets: do not publish them in public Git.** Backup reads the saved value
+without contacting Mattermost, so a Mattermost outage does not prevent export.
+
+`accessTokenEnv` remains supported for manually maintained declarations. Choose
+one reference. Declared files/variables are read during full plan/apply even for
+existing bots; missing, empty, oversized, insecure or invalid credentials fail
+preflight rather than silently becoming unmanaged. `validate` checks declaration
+shape and paths without requiring credentials to be provisioned. With neither
+reference in a legacy declaration, the destination token is unmanaged.
+
+Existing tokens are compared only in memory. Plan reports the field `accessToken`
+without its value, diff or fingerprint. Apply uses `teambridge token import` only
+when it differs; it does not reinstall or reactivate the bot, alter the installer,
+or replace settings/bindings. Reapplying the same value performs no token write
+or connection restart. A changed token is checked against the same bot/server
+before any selected workspace is written, and validated again by the server at
+restoration. Invalid/revoked tokens and tokens of a different bot are rejected.
 
 Before a fresh install, the reconciler calls `multica teambridge verify` with
 the supplied bot token in a private file. The CLI performs read-only TeamBridge
@@ -286,16 +303,17 @@ multica-declarative export --with-teambridge --force --output-dir ./snapshot
 
 Omitting the flag when the destination already contains `teambridge/` fails
 instead of silently dropping or leaving stale integration settings. All source
-images are read and the complete generated snapshot is validated before any
+images and, in full mode, stored tokens are read and the complete generated snapshot is validated before any
 generated paths are replaced. `--all-workspaces` stages and validates every
 workspace before replacing the exported set.
 
-A full refresh keeps a manually chosen `accessTokenEnv`. If an existing bot
-declaration references `accessTokenFile`, full refresh refuses to discard that
-file, even if the bot was removed from the source. Move the credential to your
-secret store and use an environment reference before refreshing. Explicit
-`--without-secrets` allows replacing generated credential files and dropping
-their references; unrelated files and Git history are still outside that cleanup.
+A full refresh updates its own generated token files. Each bot's
+`.multica-generated.json` records only generated relative paths, never secret
+values or fingerprints. A secretless refresh removes those generated token files
+and their references. Unowned local files are preserved, including old manually
+supplied token files; a collision with a newly generated path fails without
+replacing the snapshot. A legacy `accessTokenEnv` is replaced by the exported
+`accessTokenFile` reference. Git history and unrelated files are untouched.
 
 Apply preflights every selected workspace before its first write. Credentials,
 known capability failures and readable image data are checked at that stage.
@@ -310,13 +328,14 @@ requires an explicit change in Multica. An already-active bot cannot be attached
 to a second agent/workspace simultaneously; the server enforces this ownership.
 
 Revoked records are exported and compare without writes when unchanged. They can
-be reactivated with an explicit `status: active` plus token. The API cannot edit
-a revoked record or recreate a revoked row on a fresh installation without
-temporarily activating it; those cases fail preflight. Remove a historical record
+have their managed tokens restored without activation. They can be reactivated
+with an explicit `status: active` plus token. Other settings of a revoked record
+cannot be changed, nor can a revoked row be recreated on a fresh installation
+without temporarily activating it; those cases fail preflight. Remove a historical record
 from the desired snapshot or explicitly choose activation before migration.
 
 This is a **declarative configuration export, not a full Multica backup**. The API
-does not expose bot tokens, user-account binding records, chat route mappings,
+does not expose user-account binding records, chat route mappings,
 conversation history, inbound/outbound queues, deduplication state, binding
 tokens, WebSocket leases or deployment secrets. Deployment variables such as
 `MULTICA_MATTERMOST_SECRET_KEY`, `MULTICA_MATTERMOST_ALLOWED_SERVERS`, application

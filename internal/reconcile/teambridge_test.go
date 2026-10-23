@@ -22,6 +22,9 @@ type teamBridgeMemory struct {
 	listErr, verifyErr                                        error
 	wrongInstallIdentity                                      bool
 	lastInput                                                 model.TeamBridgeBotInput
+	storedToken                                               string
+	tokenReads, tokenWrites                                   int
+	tokenErr                                                  error
 }
 
 func (b *teamBridgeMemory) ListTeamBridgeInstallations() ([]model.TeamBridgeInstallation, error) {
@@ -52,6 +55,7 @@ func (b *teamBridgeMemory) VerifyTeamBridgeBot(in model.TeamBridgeBotInput, _ st
 func (b *teamBridgeMemory) InstallTeamBridgeBot(agentID string, in model.TeamBridgeBotInput) (model.TeamBridgeInstallation, error) {
 	b.installs++
 	b.lastInput = in
+	b.storedToken = in.AccessToken
 	a := model.TeamBridgeInstallation{ID: "installed", AgentID: agentID, ServerURL: in.ServerURL, BotUserID: "bot-native-id", Status: "active", Context: in.Context, AccessMode: in.AccessMode, DeniedReply: in.DeniedReply}
 	for _, name := range in.AllowedUsernames {
 		a.AllowedUsers = append(a.AllowedUsers, model.TeamBridgeAllowedUser{ID: "native-" + name, Username: name})
@@ -103,6 +107,16 @@ func (b *teamBridgeMemory) RevokeTeamBridgeBot(id string) error {
 	return errors.New("missing installation")
 }
 
+func (b *teamBridgeMemory) ExportTeamBridgeToken(string) (string, error) {
+	b.tokenReads++
+	return b.storedToken, b.tokenErr
+}
+func (b *teamBridgeMemory) ImportTeamBridgeToken(_ string, token string) error {
+	b.tokenWrites++
+	b.storedToken = token
+	return nil
+}
+
 func teamBridgeFixture(t *testing.T) (*teamBridgeMemory, model.Project) {
 	t.Helper()
 	fake := existingBackend()
@@ -111,13 +125,13 @@ func teamBridgeFixture(t *testing.T) (*teamBridgeMemory, model.Project) {
 	fake.skill.Description, fake.skill.Content, fake.skill.Files = p.Skills[0].Description, p.Skills[0].Content, nil
 	fake.agent.Instructions, fake.agent.Model = p.Agents[0].Instructions, p.Agents[0].ModelID
 	fake.agentSkills = []model.SkillSummary{{ID: "skill-1", Name: "unity"}}
-	d := model.TeamBridgeBotSpec{Name: "Review bot", Agent: "Unity Developer", ServerURL: "https://chat.example.com", BotUserID: "bot-native-id", BotUsername: "review", Status: "active", Context: model.TeamBridgeContext{Mode: "channel", LookbackHours: 8760}, AccessMode: "allowlist", AllowedUsers: []model.TeamBridgeAllowedUser{{ID: "native-alice", Username: "alice"}}, DeniedReply: model.TeamBridgeReplySpec{Mode: "text", Text: "No access"}, AccessTokenEnv: "TEAMBRIDGE_TEST_MISSING_TOKEN"}
+	d := model.TeamBridgeBotSpec{Name: "Review bot", Agent: "Unity Developer", ServerURL: "https://chat.example.com", BotUserID: "bot-native-id", BotUsername: "review", Status: "active", Context: model.TeamBridgeContext{Mode: "channel", LookbackHours: 8760}, AccessMode: "allowlist", AllowedUsers: []model.TeamBridgeAllowedUser{{ID: "native-alice", Username: "alice"}}, DeniedReply: model.TeamBridgeReplySpec{Mode: "text", Text: "No access"}}
 	p.TeamBridge = []model.TeamBridgeBotSpec{d}
-	b := &teamBridgeMemory{fakeBackend: fake, images: map[string]model.TeamBridgeImage{}, installations: []model.TeamBridgeInstallation{{ID: "installation", AgentID: "agent-1", ServerURL: d.ServerURL, BotUserID: d.BotUserID, BotUsername: d.BotUsername, Status: d.Status, Context: d.Context, AccessMode: d.AccessMode, AllowedUsers: append([]model.TeamBridgeAllowedUser{}, d.AllowedUsers...), DeniedReply: model.TeamBridgeDeniedReply{Mode: d.DeniedReply.Mode, Text: d.DeniedReply.Text}, InstallerUserID: "original-installer"}}}
+	b := &teamBridgeMemory{storedToken: "synthetic", fakeBackend: fake, images: map[string]model.TeamBridgeImage{}, installations: []model.TeamBridgeInstallation{{ID: "installation", AgentID: "agent-1", ServerURL: d.ServerURL, BotUserID: d.BotUserID, BotUsername: d.BotUsername, Status: d.Status, Context: d.Context, AccessMode: d.AccessMode, AllowedUsers: append([]model.TeamBridgeAllowedUser{}, d.AllowedUsers...), DeniedReply: model.TeamBridgeDeniedReply{Mode: d.DeniedReply.Mode, Text: d.DeniedReply.Text}, InstallerUserID: "original-installer"}}}
 	return b, p
 }
 
-func TestTeamBridgeUnmanagedByDefaultAndTokenIgnoredOnNoop(t *testing.T) {
+func TestTeamBridgeUnmanagedByDefaultAndOmitIgnoresMissingToken(t *testing.T) {
 	b, p := teamBridgeFixture(t)
 	plain := p
 	plain.TeamBridge = nil
@@ -129,6 +143,7 @@ func TestTeamBridgeUnmanagedByDefaultAndTokenIgnoredOnNoop(t *testing.T) {
 	}
 	p.TeamBridge[0].AccessTokenEnv = ""
 	p.TeamBridge[0].AccessTokenFile = "unreadable-token"
+	p.WithoutSecrets = true
 	if err := (Reconciler{Backend: b}).Apply(p, nil); err != nil {
 		t.Fatal(err)
 	}

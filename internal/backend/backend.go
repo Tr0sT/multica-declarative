@@ -15,6 +15,13 @@ type TeamBridgeOperations interface {
 	RevokeTeamBridgeBot(string) error
 }
 
+// TeamBridgeTokenOperations is required only when a bot token is managed.
+// Secrets travel through private CLI files and never through ordinary resources.
+type TeamBridgeTokenOperations interface {
+	ExportTeamBridgeToken(installationID string) (string, error)
+	ImportTeamBridgeToken(installationID, token string) error
+}
+
 type Backend interface {
 	ListSkills() ([]model.Skill, error)
 	GetSkill(skillID string) (model.Skill, error)

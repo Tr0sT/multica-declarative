@@ -103,7 +103,7 @@ multica-declarative plan
 The exporter is read-only with respect to Multica. It writes agents, skills, squads, runtime
 selectors, projects, autopilots, and (by default) agent secrets. Custom environment values are stored as `custom-env.json`; MCP
 configuration is stored as `mcp.json`. Both files live beside `agent.yaml`, are referenced from it,
-and are intended to be version-controlled with the rest of the declaration. Export fails rather
+and belong only in a private, access-controlled snapshot. **Never publish a full snapshot in public Git.** Export fails rather
 than writing an MCP configuration that Multica returned in redacted form.
 
 For a snapshot that omits secret-bearing agent settings, use
@@ -144,10 +144,20 @@ into the integration automatically. Reply images are copied as real files and
 uploaded with new attachment IDs when necessary. A forced refresh of a snapshot
 containing `teambridge/` requires the flag again.
 
-The fork deliberately does not return existing bot tokens. Settings updates
-preserve those tokens; creating or reactivating a bot requires a separately
-supplied `accessTokenEnv` or `accessTokenFile`. See [the complete field mapping,
-authentication and restore boundaries](docs/teambridge.md).
+A full export automatically includes real bot access tokens in private
+`teambridge/<agent>/credentials/bot-token` files, referenced by `accessTokenFile`.
+Both the selected fork CLI and server must support the separate administrative
+token contract; owner/admin human credentials are required. Full import restores
+managed tokens for existing bots without reinstalling them, and uses saved tokens
+for creation or explicit reactivation. Repeated apply is a no-op.
+
+`--without-secrets` / `secrets: omit` skips local and server token reads and writes.
+Existing tokens remain unchanged while non-secret settings can still reconcile.
+Legacy declarations without either token reference also leave tokens unmanaged.
+**Full snapshots contain live secrets and must not be published in public Git.**
+This exports supported declarative configuration, not all deployment data or
+internal secrets. See [the complete field mapping, authentication and restore
+boundaries](docs/teambridge.md).
 
 ## Multiple workspaces
 
@@ -184,7 +194,7 @@ multica-declarative apply --config ./snapshot/multica.yaml
 
 Flags may appear before or after the command. Use `--multica-bin` to select another Multica binary.
 Use `--without-secrets` with `export` to omit custom env, per-agent MCP configuration,
-`runtimeConfig`, and `customArgs`. Use it with `validate`, `plan`, or `apply` to leave
+`runtimeConfig`, `customArgs`, and opted-in TeamBridge bot tokens. Use it with `validate`, `plan`, or `apply` to leave
 those fields unmanaged even in a full snapshot, without opening its secret JSON files.
 A manifest with `secrets: omit` enforces the same policy without repeating the flag.
 
@@ -277,13 +287,14 @@ Important compatibility boundary:
 - non-empty export targets require `--force`;
 - undeclared agents, skills, squads, projects, and autopilots are untouched;
 - top-level pruning is not implemented;
-- secret values are exported to agent JSON files with local mode `0600` and are never printed in plans;
+- secret values are exported to private agent JSON and TeamBridge token files with local mode `0600` and are never printed in plans;
 - custom env and MCP values are passed to Multica by file, not embedded in process arguments;
 - unsupported or lossy operations fail explicitly;
 - workspace-set apply checks known capability failures before the first write, but is not transactional.
 - TeamBridge is opt-in; an unavailable extension fails preflight before writes;
-- existing TeamBridge credentials and undeclared bots are preserved; new grants
-  with exported account IDs are verified before applying them.
+- TeamBridge credentials are restored only when managed; omitted credentials and
+  undeclared bots are preserved; new grants with exported account IDs are verified
+  before applying them.
 
 ## Development
 
@@ -341,5 +352,5 @@ separate tests verify generated Multica CLI arguments and round-trip YAML behavi
   `teambridge` commands.
 - Apply must converge.
 - Destructive and lossy behavior must be explicit.
-- Secret material is declarative state stored in Git beside its agent; plans, logs, shell history,
+- Secret material may be kept only in private, access-controlled snapshots; never publish it in public Git. Plans, logs, shell history,
   and command arguments must not print its values.

@@ -125,7 +125,15 @@ func (e WorkspaceExporter) Export(options Options) (WorkspaceResult, error) {
 		// Copy only bound workspace directories, not .git or unrelated root
 		// directories. Keep per-workspace notes and resource grouping.
 		for _, key := range previous.Keys() {
-			if err := copyWorkspaceTree(filepath.Join(absolute, key), filepath.Join(staging, key)); err != nil {
+			source := filepath.Join(absolute, key)
+			var skip map[string]bool
+			if options.WithoutSecrets {
+				skip, err = generatedTeamBridgeTokenFiles(source)
+				if err != nil {
+					return WorkspaceResult{}, err
+				}
+			}
+			if err := copyWorkspaceTree(source, filepath.Join(staging, key), skip); err != nil {
 				return WorkspaceResult{}, err
 			}
 		}
@@ -180,7 +188,7 @@ func (e WorkspaceExporter) Export(options Options) (WorkspaceResult, error) {
 	return result, nil
 }
 
-func copyWorkspaceTree(source, destination string) error {
+func copyWorkspaceTree(source, destination string, skip map[string]bool) error {
 	return filepath.WalkDir(source, func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -199,6 +207,9 @@ func copyWorkspaceTree(source, destination string) error {
 		}
 		if !info.Mode().IsRegular() {
 			return fmt.Errorf("workspace export tree contains a symlink or special file: %s", path)
+		}
+		if skip[relative] {
+			return nil
 		}
 		input, err := os.Open(path)
 		if err != nil {
