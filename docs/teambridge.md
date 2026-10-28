@@ -21,7 +21,7 @@ The ordinary list endpoint remains secret-free. Full exports fail explicitly
 when either side lacks the contract or the selected human is not an owner/admin. The exact fork revision exercised
 in CI is recorded in
 [`integration/multica-teambridge.lock.json`](../integration/multica-teambridge.lock.json).
-Ordinary upstream compatibility is tested independently with official CLI 0.7.0,
+Ordinary upstream compatibility is tested independently with official CLI 0.7.1,
 pinned in [`integration/multica.lock.json`](../integration/multica.lock.json).
 
 Check the selected binary and profile:
