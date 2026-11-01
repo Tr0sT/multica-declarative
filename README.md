@@ -16,7 +16,8 @@ and history; Multica remains responsible for runtime behavior.
 
 > Status: early MVP. The declaration format is `v1alpha1` and may change.
 >
-> Compatibility baseline: **Multica 0.7.1**, released October 27, 2026.
+> Compatibility baseline: **the official Multica CLI release pinned in**
+> [`integration/multica.lock.json`](integration/multica.lock.json).
 > Existing declarations remain valid. Full skill bodies use the official CLI.
 > Core resources need no custom CLI build. TeamBridge requires the fork's CLI
 > with `teambridge` commands. Legacy `avatarUrl`/`avatarFile`
@@ -61,7 +62,7 @@ keys and a state file are added.
 
 ## Requirements
 
-- an authenticated **Multica 0.7.1** CLI and compatible server (the integration baseline);
+- an authenticated **official Multica CLI** matching `integration/multica.lock.json` and a compatible server;
 - for optional TeamBridge management, the [fork's CLI with `teambridge` commands](docs/teambridge.md#cli-requirements)
   and a fork server with the integration enabled;
 - Go 1.25+ only when building the reconciler from source.
