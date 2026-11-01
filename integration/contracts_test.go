@@ -40,6 +40,7 @@ func TestOfficialCLIContracts(t *testing.T) {
 	if strings.TrimPrefix(version.Version, "v") != lock.Version {
 		t.Fatalf("integration suite requires Multica %s, got %s", lock.Version, version.Version)
 	}
+	// Avatars are intentionally unmanaged; never require avatar CLI flags or commands.
 	contracts := map[string][]string{
 		"project list":             {"output"},
 		"project get":              {"output"},
@@ -70,14 +71,13 @@ func TestOfficialCLIContracts(t *testing.T) {
 		"agent skills set":         {"skill-ids"},
 		"agent env get":            {"output"},
 		"agent env set":            {"custom-env-file"},
-		"agent avatar":             {"file"},
 		"agent archive":            {},
 		"agent restore":            {},
 		"runtime list":             {"output"},
 		"squad list":               {"output"},
 		"squad get":                {"output"},
 		"squad create":             {"name", "leader", "description"},
-		"squad update":             {"name", "leader", "description", "instructions", "avatar-url"},
+		"squad update":             {"name", "leader", "description", "instructions"},
 		"squad member list":        {},
 		"squad member add":         {"member-id", "type", "role"},
 		"squad member set-role":    {"member-id", "member-type", "role"},
