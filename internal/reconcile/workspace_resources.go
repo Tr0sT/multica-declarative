@@ -142,7 +142,7 @@ func triggerObservedOnly(d model.AutopilotTriggerSpec, a model.AutopilotTrigger,
 		return fmt.Errorf("webhook signing secrets are write-only and cannot be restored through the official CLI")
 	}
 	if d.EventFilters != nil && !equalJSON(normalizeFilters(*d.EventFilters), normalizeFilters(a.EventFilters)) {
-		return fmt.Errorf("webhook event filters cannot be changed through the official CLI")
+		return fmt.Errorf("webhook event filters are not yet managed by multica-declarative")
 	}
 	return nil
 }
@@ -298,7 +298,7 @@ func (r Reconciler) inspectWorkspace(p model.Project, s *inspection) error {
 			}
 			if d.Squad != "" {
 				if creating || a.AssigneeType != "squad" || squadIDs[d.Squad] == "" || squadIDs[d.Squad] != a.AssigneeID {
-					return fmt.Errorf("autopilot %q squad assignment cannot be created or changed through the official CLI", d.Name)
+					return fmt.Errorf("autopilot %q squad assignment cannot be created or changed by multica-declarative", d.Name)
 				}
 			} else if creating || a.AssigneeType != "agent" || agentIDs[d.Agent] == "" || a.AssigneeID != agentIDs[d.Agent] {
 				f = append(f, "agent")
