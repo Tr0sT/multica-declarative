@@ -231,6 +231,7 @@ func TestOfficialCLIProjectAutopilotRoundTrip(t *testing.T) {
 		t.Fatal("no-op reconciliation wrote data")
 	}
 }
+
 // Multica v0.11 introduces webhook payload conditions. Preserve these
 // observe-only rules on export/import; fail changes instead of dropping them.
 func TestOfficialCLIWebhookPayloadConditionsRoundTrip(t *testing.T) {

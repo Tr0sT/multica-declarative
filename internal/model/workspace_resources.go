@@ -70,6 +70,7 @@ type WebhookEventFilter struct {
 	Actions    []string                  `json:"actions,omitempty" yaml:"actions,omitempty"`
 	Conditions []WebhookPayloadCondition `json:"conditions,omitempty" yaml:"conditions,omitempty"`
 }
+
 // WebhookPayloadCondition is observed and round-tripped, but not mutable through
 // the declarative reconciler. New upstream conditions must never be dropped.
 type WebhookPayloadCondition struct {
