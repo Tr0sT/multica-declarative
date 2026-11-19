@@ -66,8 +66,18 @@ type AutopilotSpec struct {
 	Triggers           *[]AutopilotTriggerSpec `yaml:"triggers,omitempty"`
 }
 type WebhookEventFilter struct {
-	Event   string   `json:"event" yaml:"event"`
-	Actions []string `json:"actions,omitempty" yaml:"actions,omitempty"`
+	Event      string                    `json:"event" yaml:"event"`
+	Actions    []string                  `json:"actions,omitempty" yaml:"actions,omitempty"`
+	Conditions []WebhookPayloadCondition `json:"conditions,omitempty" yaml:"conditions,omitempty"`
+}
+// WebhookPayloadCondition is observed and round-tripped, but not mutable through
+// the declarative reconciler. New upstream conditions must never be dropped.
+type WebhookPayloadCondition struct {
+	Path       string `json:"path" yaml:"path"`
+	Op         string `json:"op" yaml:"op"`
+	Value      any    `json:"value,omitempty" yaml:"value,omitempty"`
+	Values     []any  `json:"values,omitempty" yaml:"values,omitempty"`
+	IgnoreCase bool   `json:"ignore_case,omitempty" yaml:"ignore_case,omitempty"`
 }
 type AutopilotTriggerSpec struct {
 	ID       string `yaml:"id,omitempty"`

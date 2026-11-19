@@ -121,14 +121,19 @@ staged migration. The tool never calls manual trigger/run or rotates webhook URL
 
 ### Explicit compatibility boundaries
 
-The implementation uses the official Multica 0.4.42 CLI exclusively for mutations.
-It does not bypass missing CLI commands through database access or direct HTTP.
+The implementation uses the official Multica CLI pinned in
+[`integration/multica.lock.json`](../integration/multica.lock.json) for all mutations.
+It does not bypass CLI limitations through database access or direct HTTP.
 
 Existing squad-assigned autopilots can be exported, checked and edited without
-changing their assignee. The CLI only exposes `--agent`: creating/reassigning an
-autopilot to a squad is rejected. `collaborators`, webhook `provider`,
-`hasSigningSecret`, and `eventFilters` are also exported as observe-only fields.
-Changes to these fields, or recreation that would lose them, fail in preflight.
+changing their assignee. Although the v0.11 CLI has `--squad` and `--squad-id`,
+the reconciler does not yet manage creating/reassigning squad autopilots, and
+rejects these changes. `collaborators`, webhook `provider`,
+`hasSigningSecret`, and `eventFilters` (including the v0.11 webhook payload
+`conditions`) are exported and compared as observe-only fields. While the
+v0.11 CLI can mutate event filters through `--event-filters-file`, the reconciler
+does not yet support those writes. Changes to these fields, or recreation that
+would lose them, fail explicitly during preflight.
 Omitting an observe-only field leaves it unmanaged; it does not restore that
 setting in a different workspace. Existing `api` triggers can be observed and
 updated; the CLI cannot create that trigger kind.
@@ -172,5 +177,5 @@ forced export. Unit tests cover strict YAML, dates, safe relative files, referen
 duplicate resources, child matching, and malformed CLI responses. No live workspace
 or production credentials are used.
 
-Upstream contracts: [project CLI](https://github.com/multica-ai/multica/blob/v0.4.42/server/cmd/multica/cmd_project.go)
-and [autopilot CLI](https://github.com/multica-ai/multica/blob/v0.4.42/server/cmd/multica/cmd_autopilot.go).
+Upstream contracts: [project CLI](https://github.com/multica-ai/multica/blob/v0.11.0/server/cmd/multica/cmd_project.go)
+and [autopilot CLI](https://github.com/multica-ai/multica/blob/v0.11.0/server/cmd/multica/cmd_autopilot.go).

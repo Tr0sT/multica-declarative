@@ -231,6 +231,53 @@ func TestOfficialCLIProjectAutopilotRoundTrip(t *testing.T) {
 		t.Fatal("no-op reconciliation wrote data")
 	}
 }
+// Multica v0.11 introduces webhook payload conditions. Preserve these
+// observe-only rules on export/import; fail changes instead of dropping them.
+func TestOfficialCLIWebhookPayloadConditionsRoundTrip(t *testing.T) {
+	f, cli := newFixture(t)
+	f.withWorkspaceResources()
+	f.triggers[1]["event_filters"] = []any{map[string]any{
+		"event": "merge_request", "actions": []string{"open"},
+		"conditions": []any{map[string]any{
+			"path": "object_attributes.state", "op": "eq",
+			"value": "opened", "ignore_case": true,
+		}},
+	}}
+	p, dir := exportProject(t, cli)
+	if len(p.Autopilots) != 1 || p.Autopilots[0].Triggers == nil {
+		t.Fatal("missing exported triggers")
+	}
+	var webhook *model.AutopilotTriggerSpec
+	for i := range *p.Autopilots[0].Triggers {
+		trigger := &(*p.Autopilots[0].Triggers)[i]
+		if trigger.Kind == "webhook" {
+			webhook = trigger
+		}
+	}
+	if webhook == nil || webhook.EventFilters == nil || len(*webhook.EventFilters) != 1 {
+		t.Fatal("webhook filters missing from snapshot")
+	}
+	conditions := (*webhook.EventFilters)[0].Conditions
+	if len(conditions) != 1 || conditions[0].Path != "object_attributes.state" || conditions[0].Value != "opened" || !conditions[0].IgnoreCase {
+		t.Fatalf("upstream payload conditions lost: %#v", conditions)
+	}
+	loaded, err := config.Load(filepath.Join(dir, "multica.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertNoop(t, cli, loaded)
+	if err := (reconcile.Reconciler{Backend: cli}).Apply(loaded, nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.mutations()) != 0 {
+		t.Fatal("unchanged webhook filters caused writes")
+	}
+	(*webhook.EventFilters)[0].Conditions[0].Value = "merged"
+	if _, err := (reconcile.Reconciler{Backend: cli}).Plan(p); err == nil || !strings.Contains(err.Error(), "webhook event filters") {
+		t.Fatalf("changed webhook condition did not fail explicitly: %v", err)
+	}
+}
+
 func TestOfficialCLIProjectAutopilotCreateAndReapply(t *testing.T) {
 	source, cli := newFixture(t)
 	source.withWorkspaceResources()
