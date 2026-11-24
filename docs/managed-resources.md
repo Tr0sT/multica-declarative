@@ -219,7 +219,9 @@ CLI lists only IDs, names and transports. That library and its per-agent
 assignments are outside this schema. Export emits a warning whenever the library
 is non-empty. Preserve their original configuration separately; this exporter
 cannot be used as a complete workspace backup. It also does not manage issues,
-chats, task history, or machine/runtime provisioning. Projects and autopilots
+chats, task history, or machine/runtime provisioning. Document folders, document history,
+quick actions, and project workflow/status maps introduced or extended in Multica 0.12
+are also outside the managed schema; preserve them separately if needed. Projects and autopilots
 are described separately below.
 
 Historical source contracts (the original schema baseline):
