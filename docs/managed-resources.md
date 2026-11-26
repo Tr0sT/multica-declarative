@@ -166,6 +166,13 @@ and member roles. A leader is always reconciled as an agent member with role `le
 Squad avatars are unmanaged too: a legacy `avatarUrl` key is ignored, never exported,
 and never used to change or clear the live squad avatar.
 
+Multica 0.13 introduces direct member handoffs (`handoff_mode`). This setting is
+not yet managed by the declarative schema: export warns when a squad uses a
+non-default handoff mode; plan/apply do not change it. When recreating squads,
+configure the mode separately using the official CLI (`squad update --handoff-mode`).
+The generated squad briefs are not declarative resources. Runtime visibility and
+issue relations/blockers are also outside the managed schema.
+
 ## Multica 0.4.42 compatibility boundaries
 
 This section describes the historical schema baseline. Current integration tests use the official

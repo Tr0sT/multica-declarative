@@ -163,6 +163,7 @@ type Runtime struct {
 }
 
 type Squad struct {
+	HandoffMode  string  `json:"handoff_mode"`
 	ID           string  `json:"id"`
 	Name         string  `json:"name"`
 	Description  string  `json:"description"`

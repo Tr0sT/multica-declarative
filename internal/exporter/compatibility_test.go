@@ -110,3 +110,36 @@ func TestExportWarnsAboutWriteOnlyWorkspaceMCPLibrary(t *testing.T) {
 		t.Fatalf("missing workspace MCP limitation: %v", result.Warnings)
 	}
 }
+
+func TestExportWarnsAboutUnmanagedSquadHandoffMode(t *testing.T) {
+	for _, mode := range []string{"", "leader", "direct", "future-mode"} {
+		t.Run(mode, func(t *testing.T) {
+			b := exampleBackend()
+			b.squads[0].HandoffMode = mode
+			out := filepath.Join(t.TempDir(), "export")
+			result, err := (Exporter{Backend: b}).Export(Options{OutputDir: out})
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantWarning := mode != "" && mode != "leader"
+			found := false
+			for _, warning := range result.Warnings {
+				if strings.Contains(warning, "handoff mode") && strings.Contains(warning, mode) {
+					found = true
+				}
+			}
+			if found != wantWarning {
+				t.Fatalf("handoff mode %q: warnings = %v", mode, result.Warnings)
+			}
+			p, err := config.Load(filepath.Join(out, "multica.yaml"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			// The fake backend panics on mutations. Existing handoff settings
+			// must not be cleared or changed by applying the exported state.
+			if err := (reconcile.Reconciler{Backend: b}).Apply(p, nil); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
