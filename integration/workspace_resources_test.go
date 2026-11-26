@@ -237,6 +237,7 @@ func TestOfficialCLIProjectAutopilotRoundTrip(t *testing.T) {
 func TestOfficialCLIWebhookPayloadConditionsRoundTrip(t *testing.T) {
 	f, cli := newFixture(t)
 	f.withWorkspaceResources()
+	f.mu.Lock()
 	f.triggers[1]["event_filters"] = []any{map[string]any{
 		"event": "merge_request", "actions": []string{"open"},
 		"conditions": []any{map[string]any{
@@ -244,6 +245,7 @@ func TestOfficialCLIWebhookPayloadConditionsRoundTrip(t *testing.T) {
 			"value": "opened", "ignore_case": true,
 		}},
 	}}
+	f.mu.Unlock()
 	p, dir := exportProject(t, cli)
 	if len(p.Autopilots) != 1 || p.Autopilots[0].Triggers == nil {
 		t.Fatal("missing exported triggers")
