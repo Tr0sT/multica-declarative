@@ -390,6 +390,9 @@ func (e Exporter) readSnapshot(options Options) (snapshot, error) {
 			if s.ID == "" {
 				return snapshot{}, fmt.Errorf("squad %q has no id", s.Name)
 			}
+			if s.HandoffMode != "" && s.HandoffMode != "leader" {
+				warnings = append(warnings, fmt.Sprintf("squad %q uses handoff mode %q, which is outside the managed schema; preserve and configure it separately", s.Name, s.HandoffMode))
+			}
 			leader := agentNameByID[s.LeaderID]
 			if leader == "" {
 				return snapshot{}, fmt.Errorf("squad %q leader %q is not an exported agent", s.Name, s.LeaderID)
